@@ -726,6 +726,9 @@
     ],
     "client_wrapper.go": [
       "local-user-authorized-global-safari-wrapper-repair-existing-pr1712-20261029"
+    ],
+    "internal/bisect/bisect.go": [
+      "local-user-authorized-private-bisect-eviction-cache-atomic-read-after-actual-race-ci40853052089-pr1712-20261030"
     ]
   },
   "newOwnedFiles": [
@@ -819,7 +822,7 @@
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "Current RAW880 registration:113 unchanged originals+17 production adaptations+2 original test adaptations=132; archive originalFiles and all original16 adaptation entries remain intact. The specifically user-authorized Safari wrapper is17th and receives the unchanged per-file85 gate. All880 actual named/full tests, originalfour adapted test completions, four original atomic profiles, Codecov85 and complete-Git Go85 remain required. No runtime/build/race/Windows/coverage acceptance is asserted. Historical component receipts below retain their exact former605/16/114 source context; additionalCoverageContracts880 records current expansion and source partition. Remote formatter outputs must be imported verbatim and RAW candidate/new-file hashes resealed before final execution/approval.",
+  "validation": "Current RAW880 registration:112 unchanged originals+18 production adaptations+2 original test adaptations=132; all132 immutable original archive rows, prior17 adaptation entries and originaltwo test adaptations retained. User-authorized bisect eviction-cache atomic-read repair is18th, after Safari wrapper17th. Same actual per-file85 gate applies to all18; all880 named/full race cases, originalfour completions, four atomic profiles and both original global85 gates remain required. Historical16/17 component records retain their historical meanings. Latest production repair/verifier controls have no runtime/format/coverage PASS; require exact-head independent review and actual remote CI.",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -964,10 +967,18 @@
       "sources": [
         "local-user-authorized-global-safari-wrapper-repair-existing-pr1712-20261029"
       ]
+    },
+    {
+      "path": "internal/bisect/bisect.go",
+      "sha256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+      "bytes": 23993,
+      "sources": [
+        "local-user-authorized-private-bisect-eviction-cache-atomic-read-after-actual-race-ci40853052089-pr1712-20261030"
+      ]
     }
   ],
-  "adaptedCandidateStatus": "RAW source-bound hashes for17 production adaptations. Preserve all16 prior entries byte-for-byte; appended client_wrapper.go is the user-authorized global Safari fix from independently reviewed source. Original132 archive rows and originaltwo test adaptations retained. No local/87 executable validation; remote formatting import/reseal, exact-head independent review, actual OLD/NEW tests/race/Windows/resource evidence and all85 gates remain required.",
-  "originalUnmodifiedFileCount": 113,
+  "adaptedCandidateStatus": "RAW source-bound hashes for18 production adaptations. Prior17 entries unchanged and bisect appended at index17; original132 archive rows andtwo test adaptations retained. No local/87 executable validation. Remote formatting, actual880 named/full race, all18 per-file85/four profiles/both global85/security remain mandatory.",
+  "originalUnmodifiedFileCount": 112,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
   "http3ContractTestProvenance": {
@@ -2245,9 +2256,9 @@
       }
     },
     "safariAuthorization": "User explicitly authorized only global Safari wrapper reproduction/repair within existing1712 on2026-10-29; reviewed source8283363c2bde327e410dbfae8ca5083b98c951bf, root-unionae726. Independent source review receipt SHA6feade8997c09938acedfdad79c68ac6b5a9db7718e923cc1c70a9d34b3fb11b. No unrelated preset/transport change.",
-    "sourcePartition": "Original132 archive/provenance rows remain; original16 production adaptations and2 original test adaptations preserved. The specifically authorized original client_wrapper.go becomes17th production adaptation:113+17+2=132. Same actual per-file85 algorithm applies to all17, including wrapper.",
-    "status": "H2 TEST-API CORRECTION REMOTELY FORMATTED; formattedNewFiles binds current19 candidates, original raw and priorc823 format records retained as history. No Go bytes changed by latest formatter. Current-head independent review, actual880 named/full race Linux/Windows, originalfour completions, all17 per-file85/fourprofiles/both85/security remain required. Known actual bisect race and VueI18n security failures remain blocking; no runtime or whole-PR PASS.",
-    "bisectBoundary": "Private library contracts only; no private godebug environment activation proven. Any actual original lossy-cache race remains blocking.",
+    "sourcePartition": "Original132 archive rows, prior17 production adaptations and2 original test adaptations preserved. Specific user-authorized bisect cache race repair adds18th production file:112+18+2=132. Wrapper remains index16 and bisect index17. Unchanged actual per-file85 algorithm applies to all18.",
+    "status": "BISECT PRODUCTION REPAIR RAW; preceding H2 fixtures remotely formatted, all880 test source and names unchanged. Current candidate requires independent exact-head review and actual880 named/full race Linux/Windows, originalfour completions, all18 per-file85/fourprofiles/both global85/security. Original actual race and Vue security failures retained; no whole-PR PASS.",
+    "bisectBoundary": "Concrete retained private-library marker-only cache race reproduced in actual CI40853052089; user-authorized minimum atomic-read repair RAW/NOTRUN.112 tests unchanged; no ordinary HTTP/private-godebug activation proven. No lossiness or race waiver.",
     "h2Boundary": "Returned-error redaction asserted separately while explicit raw dump retains original actual bytes; unreachable oversized-frame plan omitted rather than faked.",
     "remoteFormatting": {
       "controller": "57925247d9a6ba999830ffdf99e11aee7848935d",
@@ -2786,6 +2797,106 @@
         "bytes": 8687,
         "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
       }
+    },
+    "candidateNewFilesAfterBisectRaceRepair": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 15841,
+        "sha256": "fd48644ce51e6888d303ca4a4a461ff6b30c15089505e3ce5ab0e0389faa59ba"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 9675,
+        "sha256": "acb558bb0fc14462a91be693b7b29481801b02a0a0c459870d537e1751e9b99b"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
     }
+  },
+  "bisectCacheRaceRepair": {
+    "authorization": "User: 允许在现有 #1712 内修复此竞态; 2026-10-30; no new issue/PR/batch or unrelated upstream changes",
+    "baseHead": "1898272d4fdb7f939e60fae11f0fc83cbf5cf8a0",
+    "actualRedHead": "c82356c8115678ff669e088a3d44dc955482b3c4",
+    "actualRedRun": 40853052089,
+    "actualRedJob": 123377058265,
+    "actualRedArtifact": 12888267228,
+    "actualRedArtifactSHA256": "c4e9241c2c47274b678a95df545d4a66ead9ef5c5f1aac8e0c8df3664cb88dbf",
+    "actualRedLeaf": "TestReqBisectContract_StackReports/concurrent_marker_lossy",
+    "problem": "Original ordinary eviction-hash range read races an atomic.StoreUint64 from another Matcher.stack call; actual original789 read and471 stack path retained.",
+    "repair": "Only eviction-hash range uses index and atomic.LoadUint64(&cache[i]); preserve lossy approximate dedup and existing atomic stores.",
+    "originalPath": "internal/bisect/bisect.go",
+    "originalBytes": 23969,
+    "originalSHA256": "de2e6582ffb06e9745167ae4ed820371b88c7b3af5a793d289a9997ebaedf916",
+    "candidateBytes": 23993,
+    "candidateSHA256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+    "productionAdaptationIndex": 17,
+    "sourcePartition": "112+18+2=132; first17 original adaptations and132 archive rows preserved; same per-file85 applied to eighteenth file",
+    "requiredCases": 112,
+    "reachabilityLimit": "Private library concurrency reproduced; ordinary HTTP/godebug runtime environment activation remains unproven.",
+    "status": "RAW production repair and verifier controls; runtime/format/coverage NOTRUN; original failing race evidence retained; not LGTM"
   }
 }
