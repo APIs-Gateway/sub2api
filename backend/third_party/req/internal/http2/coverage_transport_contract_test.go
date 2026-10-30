@@ -459,7 +459,7 @@ func TestReqHTTP2CoverageContract_StrictConcurrency(t *testing.T) {
 			first := f.start(reqH2ContractRequest(t, "GET", nil), true)
 			e1 := reqH2CoverageNext(t, p, "GET")
 			second := f.start(reqH2ContractRequest(t, "GET", nil), true)
-			st := reqH2CoverageState(t, p.cc, func(st ClientConnState) bool { return st.StreamsPending == 1 })
+			st := reqH2CoverageState(t, p.cc, func(st reqH2CoverageConnSnapshot) bool { return st.StreamsPending == 1 })
 			if st.StreamsActive != 1 || st.MaxConcurrentStreams != 1 || f.dialCount() != 1 {
 				t.Fatalf("queued state=%+v, dials=%d", st, f.dialCount())
 			}
@@ -468,7 +468,7 @@ func TestReqHTTP2CoverageContract_StrictConcurrency(t *testing.T) {
 				if r := second.get(t); !errors.Is(r.err, context.Canceled) {
 					t.Fatalf("queued cancel=%v", r.err)
 				}
-				reqH2CoverageState(t, p.cc, func(st ClientConnState) bool {
+				reqH2CoverageState(t, p.cc, func(st reqH2CoverageConnSnapshot) bool {
 					return st.StreamsPending == 0 && st.StreamsReserved == 0 && st.StreamsActive == 1
 				})
 			}
@@ -482,7 +482,7 @@ func TestReqHTTP2CoverageContract_StrictConcurrency(t *testing.T) {
 				p.response(e2.id, "second")
 				reqH2ContractOK(t, second.get(t), "second")
 			}
-			reqH2CoverageState(t, p.cc, func(st ClientConnState) bool {
+			reqH2CoverageState(t, p.cc, func(st reqH2CoverageConnSnapshot) bool {
 				return st.StreamsActive == 0 && st.StreamsReserved == 0 && st.StreamsPending == 0
 			})
 			reqH2CoverageReuse(t, f, p)
@@ -526,8 +526,9 @@ func TestReqHTTP2CoverageContract_ReadErrorMetrics(t *testing.T) {
 			}
 			reqH2CoverageAwait(t, p.cc.readerDone, "terminal private reader")
 			reqH2CoverageAwait(t, p.done, "terminal independent peer reader")
-			if !p.cc.State().Closed {
-				t.Fatalf("connection not closed: %+v", p.cc.State())
+			st := reqH2CoverageSnapshot(p.cc)
+			if !st.Closed {
+				t.Fatalf("connection not closed: %+v", st)
 			}
 			mu.Lock()
 			actual := append([]string(nil), metrics...)

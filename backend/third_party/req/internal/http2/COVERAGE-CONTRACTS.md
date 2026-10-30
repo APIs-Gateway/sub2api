@@ -42,8 +42,9 @@ are unknown. It does not claim the original coverage gates pass.
   uses `compress/flate`, not a zlib wrapper. Implicit gzip and disabled passthrough
   preserve the fork's existing policy.
 - Strict concurrency negotiates MAX_CONCURRENT_STREAMS=1 and observes its ACK.
-  A real active stream plus State.StreamsPending proves queuing; completion or
-  cancellation must return pending/reserved/active state to the expected values
+  A real active stream plus a mutex-protected snapshot of pendingRequests proves
+  queuing; completion or cancellation must return pending/reserved/active state
+  to the expected values
   and permit a same-connection exchange without an extra dial.
 - Connection read metrics use the actual ClientConn obtained from the real
   pool, avoiding an automatic Transport retry adding unrelated metrics. EOF,
@@ -126,3 +127,24 @@ the governing BSD license; SHA256
 `911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad`.
 No new upstream production dependency or platform-specific coverage profile is
 introduced, and no currently unused production function is called for coverage.
+
+## Copied connection state observation correction
+
+Actual PR CI run `40853052089` at `c82356c8115678ff669e088a3d44dc955482b3c4`
+rejected the new H2 test package during compilation: this copied implementation
+has a `ClientConnState` type but no `ClientConn.State()` method. The failed run
+is retained; no H2 leaf, full suite or coverage acceptance is claimed from it.
+
+The test-only `reqH2CoverageSnapshot` now takes the existing `cc.mu` and reads
+only `closed`, `len(streams)`, `streamsReserved`, `pendingRequests` and
+`maxConcurrentStreams`. These fields are guarded by that mutex in production:
+stream reservation, stream insertion/removal, queued `cond.Wait`, connection
+closure and peer settings updates retain their original synchronization. The
+helper changes no connection fields, does not manufacture a queue or fake any
+state, and releases the mutex before predicate evaluation or waiting. The
+HEADERS/SETTINGS ACK prerequisites and real request/cancellation/reader joins
+remain unchanged. Production code and all 51 test identities remain unchanged.
+
+This correction is source only and still needs independent review, remote
+formatting and actual exact-head remote execution. No local or server 87
+formatter, compiler, test or project validation was run.
