@@ -1,0 +1,54 @@
+name: Existing1712 exact-source Vue I18n lock generation
+
+on:
+  push:
+    branches: [codex/req-vue-i18n-lock-1712]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vue-i18n-lock:
+    name: Actual remote lock generation only (not application acceptance)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SOURCE_HEAD: 88aac98317b0192b3e05204af009d89a3dc2bb3a
+      SOURCE_TREE: ed7047c3240d6f0dd7938f61696b845ac01e3990
+      npm_config_ignore_scripts: 'true'
+    steps:
+      - name: Fetch the exact reviewed controller
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+      - name: Fetch the complete exact source tree
+        uses: actions/checkout@v6
+        with:
+          ref: 88aac98317b0192b3e05204af009d89a3dc2bb3a
+          path: source
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Generate only the lock and preserve exact full-tree provenance
+        run: >-
+          python3 -B controller/tools/vue-i18n-lock-controller.py
+          "$GITHUB_WORKSPACE/source" "$GITHUB_WORKSPACE/controller"
+          "$RUNNER_TEMP/vue-i18n-lock-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Preserve actual lock bytes, commands, full Git inputs and errors
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vue-i18n-lock-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/vue-i18n-lock-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
