@@ -487,16 +487,17 @@ class ProductionAdaptationPartitionRegression(unittest.TestCase):
 
     def test_original_thirteen_and_three_owned_dump_adaptations_are_required(self):
         paths = CHECKER.production_adaptation_paths(self.manifest)
-        self.assertEqual(len(paths), 17)
+        self.assertEqual(len(paths), 18)
         self.assertEqual(set(paths[13:16]), {"client.go", "dump.go", "transport.go"})
         self.assertEqual(paths[16], "client_wrapper.go")
-        self.assertEqual(self.manifest["originalUnmodifiedFileCount"], 113)
+        self.assertEqual(paths[17], "internal/bisect/bisect.go")
+        self.assertEqual(self.manifest["originalUnmodifiedFileCount"], 112)
         self.assertEqual(len(self.manifest["originalFiles"]), 132)
         self.assertEqual(len(self.manifest["originalTestAdaptations"]), 2)
 
     def test_each_missing_declared_or_candidate_path_is_rejected(self):
         for key in ("allowedProductionAdaptations", "adaptedCandidateFiles"):
-            for index in range(17):
+            for index in range(18):
                 with self.subTest(key=key, index=index):
                     manifest = copy.deepcopy(self.manifest)
                     if key == "allowedProductionAdaptations":
@@ -527,23 +528,31 @@ class ProductionAdaptationPartitionRegression(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "source/per-file85 partition"):
                     CHECKER.production_adaptation_paths(manifest)
 
-    def test_wrapper_cannot_be_excluded_or_replaced_with_unadapted_original(self):
+    def assert_adaptation_cannot_be_excluded_or_replaced(self, path):
         for replacement in (None, "header.go"):
             for key in ("allowedProductionAdaptations", "adaptedCandidateFiles"):
-                with self.subTest(replacement=replacement, key=key):
+                with self.subTest(path=path, replacement=replacement, key=key):
                     manifest = copy.deepcopy(self.manifest)
                     if key == "allowedProductionAdaptations":
-                        sources = manifest[key].pop("client_wrapper.go")
+                        sources = manifest[key].pop(path)
                         if replacement is not None:
                             manifest[key][replacement] = sources
                     else:
-                        item = manifest[key].pop()
-                        self.assertEqual(item["path"], "client_wrapper.go")
+                        index = next(i for i, item in enumerate(manifest[key])
+                                     if item["path"] == path)
+                        item = manifest[key].pop(index)
+                        self.assertEqual(item["path"], path)
                         if replacement is not None:
                             item["path"] = replacement
                             manifest[key].append(item)
                     with self.assertRaisesRegex(SystemExit, "source/per-file85 partition"):
                         CHECKER.production_adaptation_paths(manifest)
+
+    def test_wrapper_cannot_be_excluded_or_replaced_with_unadapted_original(self):
+        self.assert_adaptation_cannot_be_excluded_or_replaced("client_wrapper.go")
+
+    def test_bisect_cannot_be_excluded_or_replaced_with_unadapted_original(self):
+        self.assert_adaptation_cannot_be_excluded_or_replaced("internal/bisect/bisect.go")
 
     def test_original_wrapper_provenance_and_original16_order_remain(self):
         paths = CHECKER.production_adaptation_paths(self.manifest)
@@ -557,7 +566,18 @@ class ProductionAdaptationPartitionRegression(unittest.TestCase):
         self.assertEqual(original, {"path": "client_wrapper.go", "size": 30282,
                          "sha256": "ca330cd036d9cc0936ad5f0170dff3be7e4ec814b9a8c53b9259c89f1a1be0dc"})
         self.assertNotIn("client_wrapper.go", self.manifest["newOwnedFiles"])
-        self.assertEqual(132 - len(paths) - len(self.manifest["originalTestAdaptations"]), 113)
+        self.assertEqual(132 - len(paths) - len(self.manifest["originalTestAdaptations"]), 112)
+
+    def test_original_bisect_provenance_and_original17_order_remain(self):
+        paths = CHECKER.production_adaptation_paths(self.manifest)
+        self.assertEqual(paths[16:], ("client_wrapper.go", "internal/bisect/bisect.go"))
+        self.assertEqual(tuple(self.manifest["allowedProductionAdaptations"]), paths)
+        self.assertEqual(tuple(item["path"] for item in self.manifest["adaptedCandidateFiles"]), paths)
+        original = next(item for item in self.manifest["originalFiles"]
+                        if item["path"] == "internal/bisect/bisect.go")
+        self.assertEqual(original, {"path": "internal/bisect/bisect.go", "size": 23969,
+                         "sha256": "de2e6582ffb06e9745167ae4ed820371b88c7b3af5a793d289a9997ebaedf916"})
+        self.assertNotIn("internal/bisect/bisect.go", self.manifest["newOwnedFiles"])
 
 
 class SourcePartitionRegistrationRegression(unittest.TestCase):
@@ -575,6 +595,7 @@ class SourcePartitionRegistrationRegression(unittest.TestCase):
         self.manifest_path = self.controlled / "UPSTREAM-MANIFEST.json"
         self.manifest = json.loads(self.manifest_path.read_text())
         self.wrapper_bytes = (self.controlled / "client_wrapper.go").read_bytes()
+        self.bisect_bytes = (self.controlled / "internal/bisect/bisect.go").read_bytes()
         self.modules = [{"Path": CHECKER.MODULE, "Version": "v3.57.0",
                          "Replace": {"Dir": str(self.controlled)}}]
         # This test only simulates source-selection metadata. The actual CI
@@ -606,26 +627,35 @@ class SourcePartitionRegistrationRegression(unittest.TestCase):
         self.assertEqual(proof["originalTestAdaptations"], self.manifest["originalTestAdaptations"])
 
     def test_wrong_partition_wrapper_hash_ownership_or_source_rejects(self):
-        for mutation, diagnostic in (
-                ("unmodified114", "Retain exactly113 unchanged originals"),
-                ("wrapper_hash", "Adapted source hash mismatch: client_wrapper.go"),
-                ("wrapper_bytes", "Adapted source hash mismatch: client_wrapper.go"),
-                ("wrapper_excluded", "source/per-file85 partition"),
-                ("wrapper_new_owned", "exactly132 originals")):
-            with self.subTest(mutation=mutation):
+        cases = [("unmodified113", None, "Retain exactly112 unchanged originals"),
+                 ("unmodified114", None, "Retain exactly112 unchanged originals")]
+        for path in ("client_wrapper.go", "internal/bisect/bisect.go"):
+            cases.extend((mutation, path, diagnostic) for mutation, diagnostic in (
+                ("hash", "Adapted source hash mismatch: " + path),
+                ("bytes", "Adapted source hash mismatch: " + path),
+                ("excluded", "source/per-file85 partition"),
+                ("new_owned", "exactly132 originals")))
+        for mutation, path, diagnostic in cases:
+            with self.subTest(mutation=mutation, path=path):
                 manifest = copy.deepcopy(self.manifest)
                 (self.controlled / "client_wrapper.go").write_bytes(self.wrapper_bytes)
-                if mutation == "unmodified114":
-                    manifest["originalUnmodifiedFileCount"] = 114
-                elif mutation == "wrapper_hash":
-                    manifest["adaptedCandidateFiles"][-1]["sha256"] = "0" * 64
-                elif mutation == "wrapper_bytes":
-                    (self.controlled / "client_wrapper.go").write_bytes(self.wrapper_bytes + b"\n")
-                elif mutation == "wrapper_excluded":
-                    del manifest["allowedProductionAdaptations"]["client_wrapper.go"]
-                    manifest["adaptedCandidateFiles"].pop()
+                (self.controlled / "internal/bisect/bisect.go").write_bytes(self.bisect_bytes)
+                if mutation in ("unmodified113", "unmodified114"):
+                    manifest["originalUnmodifiedFileCount"] = int(mutation.removeprefix("unmodified"))
+                elif mutation == "hash":
+                    item = next(item for item in manifest["adaptedCandidateFiles"]
+                                if item["path"] == path)
+                    item["sha256"] = "0" * 64
+                elif mutation == "bytes":
+                    original = self.wrapper_bytes if path == "client_wrapper.go" else self.bisect_bytes
+                    (self.controlled / path).write_bytes(original + b"\n")
+                elif mutation == "excluded":
+                    del manifest["allowedProductionAdaptations"][path]
+                    index = next(i for i, item in enumerate(manifest["adaptedCandidateFiles"])
+                                 if item["path"] == path)
+                    manifest["adaptedCandidateFiles"].pop(index)
                 else:
-                    manifest["newOwnedFiles"].append("client_wrapper.go")
+                    manifest["newOwnedFiles"].append(path)
                 self.manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
                 proof = self.evidence / "package-selection-proof.json"
                 proof.unlink(missing_ok=True)

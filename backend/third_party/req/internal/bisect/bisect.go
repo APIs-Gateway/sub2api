@@ -786,8 +786,8 @@ func (d *dedup) seenLossy(h uint64) bool {
 
 	// Compute index in set to evict as hash of current set.
 	ch := offset64
-	for _, x := range cache {
-		ch = fnvUint64(ch, x)
+	for i := range cache {
+		ch = fnvUint64(ch, atomic.LoadUint64(&cache[i]))
 	}
 	atomic.StoreUint64(&cache[uint(ch)%uint(len(cache))], h)
 	return false
