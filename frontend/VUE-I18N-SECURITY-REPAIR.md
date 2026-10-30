@@ -112,5 +112,21 @@ Keep raw audit output, production dependency paths and original exceptions.
 No new exception, skip, lowered gate or synthetic test PASS is acceptable.
 
 Original Go 880 identities, all 132 original source provenance rows, all 17
-production per-file 85% gates, both original 85% gates and four original
+production adaptations plus the newly authorized eighteenth bisect adaptation
+under the same per-file 85% algorithm, both original 85% gates and four original
 profiles remain required. This source declaration is NOTRUN and is not LGTM.
+
+## Permanent exact-case CI registration
+
+The existing strict frontend-fixture job retains its original ten files and
+twenty-seven required names, then adds this eleventh file and ten exact Vue
+identities. Both named and full actual Vitest JSON must contain the complete
+suite-prefixed fullName multiset once each with passed status. Dynamic strings
+retain Vitest 2.1.9's quotes; no quote stripping or suffix matching substitutes
+for the Vue exact-case check. The original single todo remains the sole allowed
+nonpassed assertion in the full suite, and the minimum count rises by ten.
+
+That job now records Node22/pnpm9.15.9, frozen-install streams/exit and unchanged
+lock bytes, a separate blocking typecheck with streams/exit, and all tracked
+source hashes before/after execution. Other frontend/build/security jobs retain
+their checks. This registers requirements; actual execution remains NOTRUN.
