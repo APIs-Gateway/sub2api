@@ -60,7 +60,7 @@ gofmt -l third_party/req/h1_boundary_contract_test.go > "$evidence/http1-boundar
 test ! -s "$evidence/http1-boundary-gofmt.list"
 gofmt -l third_party/req/public_default_contract_test.go > "$evidence/public-default-gofmt.list"
 test ! -s "$evidence/public-default-gofmt.list"
-gofmt -l third_party/req/internal/bisect/contracts_test.go > "$evidence/bisect-contract-gofmt.list"
+gofmt -l third_party/req/internal/bisect/bisect.go third_party/req/internal/bisect/contracts_test.go > "$evidence/bisect-contract-gofmt.list"
 test ! -s "$evidence/bisect-contract-gofmt.list"
 gofmt -l third_party/req/internal/http2/coverage_transport_contract_test.go third_party/req/internal/http2/coverage_frame_contract_test.go third_party/req/internal/http2/coverage_contract_peer_test.go > "$evidence/http2-coverage-gofmt.list"
 test ! -s "$evidence/http2-coverage-gofmt.list"
