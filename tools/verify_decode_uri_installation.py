@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import traceback
+import urllib.parse
 import urllib.request
 
 VERSION = "0.5.1"
@@ -170,10 +171,15 @@ def installed_evidence(repo, evidence, discovery):
         require(root.is_relative_to(installed_root), "Owner dependency escaped installed frontend")
         if edge["requested"] in ("query-string", "decode-uri-component"):
             entry = Path(edge["actualEntry"])
+            import_url = urllib.parse.urlsplit(edge["importURL"])
+            require(import_url.scheme == "file" and import_url.netloc == ""
+                    and import_url.query == "" and import_url.fragment == ""
+                    and urllib.parse.urlunsplit(import_url) == edge["importURL"]
+                    and urllib.parse.unquote_to_bytes(import_url.path) == os.fsencode(entry),
+                    "Actual ESM import URL does not identify the exact canonical entry")
             require(target_value["exports"]["default"] == "./index.js"
                     and entry == root / "index.js" and entry.resolve(strict=True) == entry
-                    and sha(entry.read_bytes()) == edge["actualEntrySHA256"]
-                    and entry.as_uri() == edge["importURL"], "Actual ESM entry binding changed")
+                    and sha(entry.read_bytes()) == edge["actualEntrySHA256"], "Actual ESM entry binding changed")
         previous = edge["targetRoot"]
     instances = discovery["physicalInstances"]
     require(instances and len({item["root"] for item in instances}) == len(instances)
