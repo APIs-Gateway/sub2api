@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      APP_HEAD: ae7260bba43cc8ed07db94513a42b73e5b9d104b
-      APP_TREE: 490495c4230c87d3ffa8aa709956192fa4318f40
+      APP_HEAD: f6817b25ffa762025a4557284c71bb83f43260c8
+      APP_TREE: 6110d81880f6d93a297e8a04e63f2dc8117b6778
       GOTOOLCHAIN: local
       GOWORK: "off"
     steps:
@@ -80,7 +80,7 @@ jobs:
       - name: Checkout fixed complete application tree
         uses: actions/checkout@v6
         with:
-          ref: ae7260bba43cc8ed07db94513a42b73e5b9d104b
+          ref: f6817b25ffa762025a4557284c71bb83f43260c8
           path: source
           fetch-depth: 0
           persist-credentials: false
