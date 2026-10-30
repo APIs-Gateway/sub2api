@@ -1,5 +1,37 @@
 # Retained bisect library contracts for existing PR #1712
 
+## Current authorized cache-race repair (2026-10-30)
+
+The original marker-only concurrent contract actually failed under remote
+`-race` on formal source `c82356c8115678ff669e088a3d44dc955482b3c4`,
+run40853052089/job123377058265. It retained the real ordinary eviction-cache
+read at original bisect.go789 concurrent with atomic.StoreUint64 through
+Matcher.stack; the test, parent and package failed. The immutable original
+artifact12888267228 SHA256
+`c4e9241c2c47274b678a95df545d4a66ead9ef5c5f1aac8e0c8df3664cb88dbf`
+and its failure remain evidence; green synthetic controls do not waive it.
+
+The user explicitly authorized this concrete repair within existing #1712.
+The only production change reads each eviction-hash slot by index with
+`atomic.LoadUint64`, matching the existing atomic slot loads and stores. The
+lossy cache still permits duplicates and selects an eviction slot from its
+approximate observed contents. It does not add exact-once guarantees, change
+matching/output policy or establish ordinary HTTP activation. Original source
+and license records below remain immutable historical provenance.
+
+This original file becomes the eighteenth production adaptation, following all
+original seventeen in order (Safari wrapper remains index16; bisect is index17).
+The current partition is112 unchanged+18 production+2 original test adaptations
+=132. The original per-file85 algorithm applies to every adaptation, including
+bisect; all880 names, the112 bisect cases, race checks, both original global85
+gates and four profiles remain. Remote formatting now also checks bisect.go.
+
+The repair and updated verifier controls are RAW source, runtime **NOTRUN**.
+They require independent exact-head review and actual remote named/full race
+and coverage results. No local or server87 executable validation was performed.
+
+## Historical original test-source specification
+
 These tests address a concrete untested component in the existing complete-Git
 coverage result. They do not alter the production implementation, original
 archive entries, original 605 test inventory, source denominator, coverage
@@ -8,7 +40,7 @@ review their registration separately. No new issue or PR is created.
 
 ## Source and license
 
-The unchanged req v3.57.0 internal/bisect/bisect.go is 23,969 bytes, SHA256
+The original req v3.57.0 archive internal/bisect/bisect.go is 23,969 bytes, SHA256
 de2e6582ffb06e9745167ae4ed820371b88c7b3af5a793d289a9997ebaedf916.
 It is one of the original 132 archive files.
 

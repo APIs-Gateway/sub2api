@@ -186,14 +186,37 @@ func reqH2CoverageAwait(t *testing.T, signal <-chan struct{}, label string) {
 	}
 }
 
-func reqH2CoverageState(t *testing.T, cc *ClientConn, want func(ClientConnState) bool) ClientConnState {
+// The copied implementation has no ClientConn.State method. Observe only the
+// actual fields asserted by these tests, under their production mutex. This
+// helper does not reserve slots, publish streams, or modify transport state.
+type reqH2CoverageConnSnapshot struct {
+	Closed               bool
+	StreamsActive        int
+	StreamsReserved      int
+	StreamsPending       int
+	MaxConcurrentStreams uint32
+}
+
+func reqH2CoverageSnapshot(cc *ClientConn) reqH2CoverageConnSnapshot {
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
+	return reqH2CoverageConnSnapshot{
+		Closed:               cc.closed,
+		StreamsActive:        len(cc.streams),
+		StreamsReserved:      cc.streamsReserved,
+		StreamsPending:       cc.pendingRequests,
+		MaxConcurrentStreams: cc.maxConcurrentStreams,
+	}
+}
+
+func reqH2CoverageState(t *testing.T, cc *ClientConn, want func(reqH2CoverageConnSnapshot) bool) reqH2CoverageConnSnapshot {
 	t.Helper()
 	guard := time.NewTimer(5 * time.Second)
 	defer guard.Stop()
 	tick := time.NewTicker(time.Millisecond)
 	defer tick.Stop()
 	for {
-		st := cc.State()
+		st := reqH2CoverageSnapshot(cc)
 		if want(st) {
 			return st
 		}

@@ -25,7 +25,7 @@ def require(condition, message):
 
 
 def objects(path):
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     decoder = json.JSONDecoder()
     result = []
     while text.strip():
@@ -37,11 +37,11 @@ def objects(path):
 
 
 def report(evidence, name, value):
-    (evidence / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    (evidence / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def events(path):
-    return [json.loads(line) for line in path.read_text().splitlines()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def successful_events(path):
@@ -62,7 +62,7 @@ def successful_events(path):
 
 
 def inventory(backend):
-    return json.loads((backend / "tools/req-http2-security-inventory.json").read_text())
+    return json.loads((backend / "tools/req-http2-security-inventory.json").read_text(encoding="utf-8"))
 
 
 def verify_named(backend, evidence, filename):
@@ -182,7 +182,7 @@ def verify_adapted_original_tests(backend, values):
         "request_test.go": ["TestSetFile", "TestTraceInfo", "TestEnableDumpToFIle"],
         "client_test.go": ["TestEnableDumpAllToFile"],
     }
-    manifest = json.loads((backend / "third_party/req/UPSTREAM-MANIFEST.json").read_text())
+    manifest = json.loads((backend / "third_party/req/UPSTREAM-MANIFEST.json").read_text(encoding="utf-8"))
     declared = {item["path"]: item["requiredTests"] for item in manifest["originalTestAdaptations"]}
     require(declared == expected, "Original adapted required test inventory changed")
     proof = []
@@ -297,7 +297,7 @@ def main():
             require(Path(package["Dir"]).resolve() == controlled / relative, "Wrong package directory")
             for name in package.get("TestGoFiles", []) + package.get("XTestGoFiles", []):
                 selected.add((Path(relative) / name).as_posix())
-        manifest = json.loads((controlled / "UPSTREAM-MANIFEST.json").read_text())
+        manifest = json.loads((controlled / "UPSTREAM-MANIFEST.json").read_text(encoding="utf-8"))
         expected_paths = {v["path"] for v in manifest["originalFiles"]} | set(manifest["newOwnedFiles"])
         actual_paths = set()
         for path in controlled.rglob("*"):
@@ -309,13 +309,13 @@ def main():
                 actual_paths == expected_paths,
                 "Controlled module must contain exactly132 originals+declared owned files")
         adaptations = set(production_adaptation_paths(manifest))
-        require(len(manifest["adaptedCandidateFiles"]) == 17 and
+        require(len(manifest["adaptedCandidateFiles"]) == 18 and
                 {v["path"] for v in manifest["adaptedCandidateFiles"]} == adaptations,
                 "Incomplete adapted source hash inventory")
         production = {v["path"] for v in manifest["originalFiles"]
                       if v["path"].endswith(".go") and not v["path"].endswith("_test.go")}
         require(len(production) == 89 and adaptations <= production,
-                "Retain all89 original production Go files and exactly17 declared adaptations")
+                "Retain all89 original production Go files and exactly18 declared adaptations")
         test_adaptations = manifest.get("originalTestAdaptations", [])
         require(isinstance(test_adaptations, list) and len(test_adaptations) == 2 and
                 {item.get("path") for item in test_adaptations} == {"request_test.go", "client_test.go"},
@@ -333,9 +333,9 @@ def main():
             require(len(data) == item["candidateBytes"] and
                     hashlib.sha256(data).hexdigest() == item["candidateSHA256"],
                     "Adapted original test hash mismatch: " + path)
-        require(manifest["originalUnmodifiedFileCount"] == 113 and
-                len(original_by_path) - len(adaptations) - len(adapted_tests) == 113,
-                "Retain exactly113 unchanged originals after17 production and two declared test adaptations")
+        require(manifest["originalUnmodifiedFileCount"] == 112 and
+                len(original_by_path) - len(adaptations) - len(adapted_tests) == 112,
+                "Retain exactly112 unchanged originals after18 production and two declared test adaptations")
         for item in manifest["originalFiles"]:
             if item["path"] not in adaptations | adapted_tests:
                 data = (controlled / item["path"]).read_bytes()
@@ -366,7 +366,7 @@ def main():
         require(hashlib.sha256(data).hexdigest() == ZIP_SHA, "Official archive SHA mismatch")
         (evidence / "original.zip").write_bytes(data)
         prefix = MODULE + "@v3.57.0/"
-        manifest = json.loads((backend / "third_party/req/UPSTREAM-MANIFEST.json").read_text())
+        manifest = json.loads((backend / "third_party/req/UPSTREAM-MANIFEST.json").read_text(encoding="utf-8"))
         expected = {v["path"]: v for v in manifest["originalFiles"]}
         seen = []
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
@@ -388,8 +388,8 @@ def main():
         original = objects(evidence / "modules.json")
         old = objects(evidence / "old-modules.json")
         graph_proof = compare_old_module_graphs(original, old, backend, evidence)
-        current = (backend / "go.mod").read_text()
-        oldmod = (evidence / "old.mod").read_text()
+        current = (backend / "go.mod").read_text(encoding="utf-8")
+        oldmod = (evidence / "old.mod").read_text(encoding="utf-8")
         expected = current.replace("replace " + MODULE + " => ./third_party/req", "replace " + MODULE + " => " + str(evidence / "original"))
         require(oldmod == expected, "Old modfile changed more than replace path")
         require((backend / "go.sum").read_bytes() == (evidence / "old.sum").read_bytes(), "Old-red sums changed")
@@ -402,7 +402,7 @@ def main():
         expected = inventory(backend)
         values = events(evidence / "old-red.json")
         package, test = expected["privatePackage"], expected["sameOldWireWitness"]
-        require((evidence / "old-red.exit").read_text().strip() == "1", "Old witness needs actual assertion failure exit1")
+        require((evidence / "old-red.exit").read_text(encoding="utf-8").strip() == "1", "Old witness needs actual assertion failure exit1")
         matching = [v for v in values if v.get("Package") == package and v.get("Test") == test]
         require(any(v.get("Action") == "run" for v in matching) and any(v.get("Action") == "fail" for v in matching), "Old witness did not run/fail exact test")
         output = "".join(v.get("Output", "") for v in matching)
@@ -424,13 +424,15 @@ def production_adaptation_paths(manifest):
                 "internal/dump/dump.go", "request.go", "response.go", "trace.go", "internal/http3/transport.go",
                 "internal/http3/stream.go", "internal/compress/deflate_reader.go", "decode.go", "digest.go",
                 "parallel_download.go", "client.go", "dump.go", "transport.go",
-                "client_wrapper.go")
+                "client_wrapper.go", "internal/bisect/bisect.go")
     # User authorized the specific global Safari wrapper correction in existing
     # PR1712 on2026-10-29. Keep all132 archive rows and original16 adaptations;
-    # the appended wrapper uses the same actual fix-block85 gate below.
+    # the wrapper retains index16. The user authorized the reproduced private
+    # bisect cache race repair on2026-10-30: append it at index17 and apply
+    # the same actual fix-block85 gate to all18 production adaptations.
     declared = manifest["allowedProductionAdaptations"]
     candidates = [item["path"] for item in manifest["adaptedCandidateFiles"]]
-    require(isinstance(declared, dict) and len(declared) == len(candidates) == len(expected) == 17 and
+    require(isinstance(declared, dict) and len(declared) == len(candidates) == len(expected) == 18 and
             set(declared) == set(candidates) == set(expected),
             "Unexpected or missing production adaptation in source/per-file85 partition")
     return expected
@@ -441,7 +443,7 @@ def coverage(backend, evidence):
     blocks = {}
     pattern = re.compile(r"(.+):(\d+)\.(\d+),(\d+)\.(\d+) (\d+) (\d+)")
     for kind in ("named", "all"):
-        raw = (evidence / (kind + ".raw.out")).read_text().splitlines()
+        raw = (evidence / (kind + ".raw.out")).read_text(encoding="utf-8").splitlines()
         require(raw and raw[0] == "mode: atomic", "Missing atomic profile")
         mapped = [raw[0]]
         for line in raw[1:]:
@@ -460,14 +462,14 @@ def coverage(backend, evidence):
                     blocks[key][1] += count
                 else:
                     blocks[key] = [statements, count]
-        (evidence / (kind + ".mapped.out")).write_text("\n".join(mapped) + "\n")
+        (evidence / (kind + ".mapped.out")).write_text("\n".join(mapped) + "\n", encoding="utf-8")
     report(evidence, "coverage-path-only-proof.json", proofs)
     result = []
-    manifest = json.loads((backend / "third_party/req/UPSTREAM-MANIFEST.json").read_text())
+    manifest = json.loads((backend / "third_party/req/UPSTREAM-MANIFEST.json").read_text(encoding="utf-8"))
     adapted = production_adaptation_paths(manifest)
     for relative in adapted:
-        old = (evidence / "original" / relative).read_text().splitlines()
-        new = (backend / "third_party/req" / relative).read_text().splitlines()
+        old = (evidence / "original" / relative).read_text(encoding="utf-8").splitlines()
+        new = (backend / "third_party/req" / relative).read_text(encoding="utf-8").splitlines()
         added = set()
         for tag, _, _, start, end in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
             if tag in ("insert", "replace"):

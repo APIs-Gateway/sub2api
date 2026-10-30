@@ -59,23 +59,52 @@ storage, module input mocks and global Function descriptors are restored.
 The existing runtime/locale/key tests remain unchanged. A message object's
 having a key cannot substitute for an actual translated-output assertion.
 
-## Lock generation and evidence status
+## Lock generation, reconciliation and evidence status
 
-This initial source commit intentionally retains the existing lockfile bytes.
-It is **not installable frozen-source acceptance evidence** until remote CI has
-generated the new lock, its complete diff has been independently reviewed, and
-the exact returned bytes have been imported into a new frozen source commit.
-No local or server 87 package manager, formatter, test or compiler may run.
+Remote lock-only generation completed in run `40993653992`, artifact
+`12950151961`, using exact source `88aac98317b0192b3e05204af009d89a3dc2bb3a`
+and controller `320eac8be24770bb3600e444662c0ca98b926446`. Actual Node
+22.23.4 and pnpm 9.15.9 ran `pnpm install --lockfile-only --ignore-scripts
+--no-frozen-lockfile` with an isolated owned store. The actual command exited
+zero; complete Git snapshots and three source/controller archives established
+that only the lock changed. This generated dependency data, not application
+test or security acceptance. No local or server 87 project execution occurred.
 
-A separately reviewed CI controller must use this exact full Git tree, Node 22
-and pnpm 9.15.9 to generate the lock without executing lifecycle scripts. It
-must archive complete before/after source identity, actual command/exit/stdout/
-stderr, tool versions, the original and generated lock bytes, their diff and
-hashes, and prove that only `frontend/pnpm-lock.yaml` changed. Unexpected lock
-churn or source changes are review findings, not permission to refresh unrelated
-dependencies. Preserve the existing DOMPurify and follow-redirects repairs.
+The imported lock is a **metadata-reconciled derivative**, not the unmodified
+pnpm artifact. Raw output removed eleven existing Rollup 4.54.0 `libc`
+selectors and refreshed three unrelated `deprecated` fields. After independent
+review, those fourteen complete package metadata blocks were restored from the
+original lock, retaining their exact original platform/integrity/engine/peer
+metadata. All forty-four unrelated direct selections, common package metadata
+and common snapshot dependency edges remain byte-identical to the original.
+The Vue importer and official 11.4.14 family nodes/edges retain the remote
+pnpm output. Existing DOMPurify and follow-redirects repairs are preserved.
 
-After import, actual remote frozen installation, named ten-case and full
+Immutable evidence identities (SHA-256):
+
+- Original lock, 334082 bytes:
+  `ee70bcdbe28e4ba9af148199e0829e5b0ff021fe66c3a74ad9629004a8d4caeb`.
+- Artifact ZIP, 45886172 bytes:
+  `6b409923d9e260bd7cbeb4e354c89d9e24f0f93ca79f7ac17fd4b0bfe9734850`.
+- Raw generated lock, 334817 bytes:
+  `965ca1c61173339d2e82fb6070f888e94735666adb5493d29229fe77eb1783c8`.
+- Imported reconciled lock, 334495 bytes:
+  `82ef5a10dccd9ba11d6c58b9d267bd7ff4da9b1f63a3467175f1ef35c317a72b`.
+- Independent reconciliation review:
+  `077fc474fc18871fd8455701f2533ace4e1e21125f3121c2bec691e35d76c80c`.
+
+Raw generation evidence, full original/generated maps, exact fourteen-block
+restoration diff and derivation receipt are retained under the task evidence
+folder `vue-i18n-security-oct30/remote-lock-40993653992/`. Restoring old warning
+text does not repair or prove the safety of those unrelated packages; raw new
+warnings remain preserved. No audit policy or advisory exception changes.
+
+Frozen installation of these derived bytes and all application execution are
+**NOTRUN**. Remote Node 22/pnpm 9.15.9 frozen installation must succeed without
+rewriting this lock. Any rejected or rewritten selector remains a finding;
+lock generation success cannot replace that evidence.
+
+Actual remote frozen installation, named ten-case and full
 frontend suites, typecheck, locale/key checks, production build and unchanged
 security policy must pass on the exact new head. Inspect actual exits and all
 named assertions; a green job with a continued test failure is insufficient.
@@ -83,5 +112,31 @@ Keep raw audit output, production dependency paths and original exceptions.
 No new exception, skip, lowered gate or synthetic test PASS is acceptable.
 
 Original Go 880 identities, all 132 original source provenance rows, all 17
-production per-file 85% gates, both original 85% gates and four original
+production adaptations plus the newly authorized eighteenth bisect adaptation
+under the same per-file 85% algorithm, both original 85% gates and four original
 profiles remain required. This source declaration is NOTRUN and is not LGTM.
+
+## Permanent exact-case CI registration
+
+The existing strict frontend-fixture job retains its original ten files and
+twenty-seven required names, then adds this eleventh file and ten exact Vue
+identities. Both named and full actual Vitest JSON must contain the complete
+suite-prefixed fullName multiset once each with passed status. Dynamic strings
+retain Vitest 2.1.9's quotes; no quote stripping or suffix matching substitutes
+for the Vue exact-case check. The original single todo remains the sole allowed
+nonpassed assertion in the full suite, and the minimum count rises by ten.
+
+That job now records Node22/pnpm9.15.9, frozen-install streams/exit and unchanged
+lock bytes, a separate blocking typecheck with streams/exit, and all tracked
+source hashes before/after execution. Other frontend/build/security jobs retain
+their checks. This registers requirements; actual execution remains NOTRUN.
+
+## Node observation compatibility finding
+
+First composed-source Security run41029611595 actually rejected the existing
+DOMPurify evidence helper because it still required Node20 while the authorized
+Vue migration uses supported Node22. Only that exact major-version guard moves
+20 to22; all pnpm9, source identity, official package bytes and strict exit
+checks remain. The one-line change received independent source review. Its
+actual final-head execution is pending; this does not waive the separate new
+decode-uri-component advisory found by the unchanged audit policy.
