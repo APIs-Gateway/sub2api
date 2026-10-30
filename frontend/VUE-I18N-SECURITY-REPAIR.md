@@ -130,3 +130,13 @@ That job now records Node22/pnpm9.15.9, frozen-install streams/exit and unchange
 lock bytes, a separate blocking typecheck with streams/exit, and all tracked
 source hashes before/after execution. Other frontend/build/security jobs retain
 their checks. This registers requirements; actual execution remains NOTRUN.
+
+## Node observation compatibility finding
+
+First composed-source Security run41029611595 actually rejected the existing
+DOMPurify evidence helper because it still required Node20 while the authorized
+Vue migration uses supported Node22. Only that exact major-version guard moves
+20 to22; all pnpm9, source identity, official package bytes and strict exit
+checks remain. The one-line change received independent source review. Its
+actual final-head execution is pending; this does not waive the separate new
+decode-uri-component advisory found by the unchanged audit policy.
