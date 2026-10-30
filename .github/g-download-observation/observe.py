@@ -24,7 +24,7 @@ BASE = "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63"
 # Runtime acceptance still requires actual evidence; these pins are not PASS.
 # Exact formatted880 production plus retained observer infrastructure. Ready
 # means frozen for remote execution, not that any new test or gate has passed.
-SOURCE_READY = True
+SOURCE_READY = False
 SOURCE = "e5027cc8004f5725d65ebb8be905709f1e8b978b"
 TREE = "2fa923c05d84c56c7b0bab5e5e22842f5649f7bb"
 PRODUCTION = "c82356c8115678ff669e088a3d44dc955482b3c4"
@@ -1329,7 +1329,7 @@ def observe(kind):
                         report["errors"].append({"phase": phase, "check": label, "error": traceback.format_exc()})
             if os.name != "nt":
                 # The observer is not a replacement for the unchanged source
-                # script and original16 plus authorized wrapper per-file85 obligations. Its two req profiles
+                # script and all18 production adaptation per-file85 obligations. Its two req profiles
                 # do not supply the separate PR Unit/Integration profiles.
                 env = dict(os.environ, REQ_SECURITY_EVIDENCE=str(E / "formal-new"),
                            REQ_SECURITY_EXPECTED_HEAD=SOURCE)
@@ -1347,7 +1347,7 @@ def observe(kind):
                 assert before[label] == after
             except Exception:
                 report["errors"].append({"check": label + "-after-freeze", "error": traceback.format_exc()})
-        report["policy"] = "Every NEW actual failure fails this job; no accepted-RED list or profile counter merge. Exact673 retained468 baseline, original401 within it, retained526+H2six+dump42=574 plus distinct rootTLS18/privateH2TLS13=605 are preserved as an exact separate subset of registered880. Expansion275 and focused412/413 are distinct obligations, never substitutes for full880 or legacy605. Child profiles never contribute counters to the original four profiles or original16 plus authorized Safari wrapper per-file85 gates. OLD resource and OLD TLS race observations are separate and cannot waive NEW failures."
+        report["policy"] = "Every NEW actual failure fails this job; no accepted-RED list or profile counter merge. Exact673 retained468 baseline, original401 within it, retained526+H2six+dump42=574 plus distinct rootTLS18/privateH2TLS13=605 are preserved as an exact separate subset of registered880. Expansion275 and focused412/413 are distinct obligations, never substitutes for full880 or legacy605. Child profiles never contribute counters to the original four profiles or all18 production adaptation per-file85 gates (original16 plus authorized Safari wrapper and bisect). OLD resource and OLD TLS race observations are separate and cannot waive NEW failures."
         save(E / "actual-observation.json", report)
     return 1 if report["errors"] else 0
 

@@ -415,7 +415,7 @@ def main():
                                            "interpretation": "Current HEAD raw lock/config hashes are evidence, not fixed-value gates; installed identities checked separately"}
         report["nodeVersion"] = capture(evidence, "node-version", ["node", "--version"], repo).decode().strip()
         report["pnpmVersion"] = capture(evidence, "pnpm-version", ["pnpm", "--version"], repo).decode().strip()
-        require(report["nodeVersion"].startswith("v20.") and report["pnpmVersion"].startswith("9."),
+        require(report["nodeVersion"].startswith("v22.") and report["pnpmVersion"].startswith("9."),
                 "Unexpected actual Node/pnpm major version")
         (evidence / "executed-resolution.cjs").write_text(DISCOVER, encoding="utf-8")
         discovery = json.loads(capture(evidence, "resolution", ["node", "-e", DISCOVER, str(repo / "frontend")], repo))

@@ -726,6 +726,9 @@
     ],
     "client_wrapper.go": [
       "local-user-authorized-global-safari-wrapper-repair-existing-pr1712-20261029"
+    ],
+    "internal/bisect/bisect.go": [
+      "local-user-authorized-private-bisect-eviction-cache-atomic-read-after-actual-race-ci40853052089-pr1712-20261030"
     ]
   },
   "newOwnedFiles": [
@@ -819,7 +822,7 @@
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "Current RAW880 registration:113 unchanged originals+17 production adaptations+2 original test adaptations=132; archive originalFiles and all original16 adaptation entries remain intact. The specifically user-authorized Safari wrapper is17th and receives the unchanged per-file85 gate. All880 actual named/full tests, originalfour adapted test completions, four original atomic profiles, Codecov85 and complete-Git Go85 remain required. No runtime/build/race/Windows/coverage acceptance is asserted. Historical component receipts below retain their exact former605/16/114 source context; additionalCoverageContracts880 records current expansion and source partition. Remote formatter outputs must be imported verbatim and RAW candidate/new-file hashes resealed before final execution/approval.",
+  "validation": "Current RAW880 registration:112 unchanged originals+18 production adaptations+2 original test adaptations=132; all132 immutable original archive rows, prior17 adaptation entries and originaltwo test adaptations retained. User-authorized bisect eviction-cache atomic-read repair is18th, after Safari wrapper17th. Same actual per-file85 gate applies to all18; all880 named/full race cases, originalfour completions, four atomic profiles and both original global85 gates remain required. Historical16/17 component records retain their historical meanings. Latest production repair/verifier controls have no runtime/format/coverage PASS; require exact-head independent review and actual remote CI.",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -964,10 +967,18 @@
       "sources": [
         "local-user-authorized-global-safari-wrapper-repair-existing-pr1712-20261029"
       ]
+    },
+    {
+      "path": "internal/bisect/bisect.go",
+      "sha256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+      "bytes": 23993,
+      "sources": [
+        "local-user-authorized-private-bisect-eviction-cache-atomic-read-after-actual-race-ci40853052089-pr1712-20261030"
+      ]
     }
   ],
-  "adaptedCandidateStatus": "RAW source-bound hashes for17 production adaptations. Preserve all16 prior entries byte-for-byte; appended client_wrapper.go is the user-authorized global Safari fix from independently reviewed source. Original132 archive rows and originaltwo test adaptations retained. No local/87 executable validation; remote formatting import/reseal, exact-head independent review, actual OLD/NEW tests/race/Windows/resource evidence and all85 gates remain required.",
-  "originalUnmodifiedFileCount": 113,
+  "adaptedCandidateStatus": "RAW source-bound hashes for18 production adaptations. Prior17 entries unchanged and bisect appended at index17; original132 archive rows andtwo test adaptations retained. No local/87 executable validation. Remote formatting, actual880 named/full race, all18 per-file85/four profiles/both global85/security remain mandatory.",
+  "originalUnmodifiedFileCount": 112,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
   "http3ContractTestProvenance": {
@@ -2245,11 +2256,250 @@
       }
     },
     "safariAuthorization": "User explicitly authorized only global Safari wrapper reproduction/repair within existing1712 on2026-10-29; reviewed source8283363c2bde327e410dbfae8ca5083b98c951bf, root-unionae726. Independent source review receipt SHA6feade8997c09938acedfdad79c68ac6b5a9db7718e923cc1c70a9d34b3fb11b. No unrelated preset/transport change.",
-    "sourcePartition": "Original132 archive/provenance rows remain; original16 production adaptations and2 original test adaptations preserved. The specifically authorized original client_wrapper.go becomes17th production adaptation:113+17+2=132. Same actual per-file85 algorithm applies to all17, including wrapper.",
-    "status": "REMOTE FORMATTING IMPORTED; original raw-source records retained as author history, formattedNewFiles binds current candidates. Final exact-head independent review and actual CI controls, all880 named/full-race Linux/Windows, originalfour adapted completions, all17 per-file85, four original profiles and both original85 gates remain required. Preliminary three Safari leaves passed only in separately frozen Linux OLD/NEW observation; no final-head runtime/coverage/security PASS is claimed.",
-    "bisectBoundary": "Private library contracts only; no private godebug environment activation proven. Any actual original lossy-cache race remains blocking.",
+    "sourcePartition": "Original132 archive rows, prior17 production adaptations and2 original test adaptations preserved. Specific user-authorized bisect cache race repair adds18th production file:112+18+2=132. Wrapper remains index16 and bisect index17. Unchanged actual per-file85 algorithm applies to all18.",
+    "status": "CURRENT31 GO FILES REMOTELY FORMATTED: all124 actual operations exit0/empty and all31 raw==formatted; no Go bytes changed. Current19 owned-contract identity seals include docs; original raw and all prior format records retained as history. Exact final-head independent review and actual880 named/full race Linux/Windows, originalfour completions, all18 per-file85/fourprofiles/both original global85 and current security gates remain mandatory. Preliminary sibling CI metadata is not final-head actual acceptance; reproduced failures are not waived.",
+    "bisectBoundary": "Concrete retained private-library marker-only cache race reproduced in actual CI40853052089; user-authorized minimum atomic-read repair RAW/NOTRUN.112 tests unchanged; no ordinary HTTP/private-godebug activation proven. No lossiness or race waiver.",
     "h2Boundary": "Returned-error redaction asserted separately while explicit raw dump retains original actual bytes; unreachable oversized-frame plan omitted rather than faked.",
-    "formattedNewFiles": {
+    "remoteFormatting": {
+      "controller": "d05d8c3bd2de8590c3cf093cd7da1b1bd3ded3cc",
+      "source": "1a8cac588077e3bed50c64a2a12a5704e9f9e806",
+      "sourceTree": "9e0c3e0e725942bac686c63a9561ea60ee93da23",
+      "run": 41029611698,
+      "job": 123975892169,
+      "artifact": 12964518905,
+      "artifactBytes": 31179113,
+      "artifactSHA256": "efb074cb2b9b467061809ba0c5a9262370d3637b2d1fd63f4ec76c1f39c76330",
+      "actualInputs": 31,
+      "actualOperations": 124,
+      "all31Raw0EmptyUnchanged": true,
+      "other93Exit0Empty": true,
+      "actualGoByteChanges": 0,
+      "prior30Exact579Formatted": true,
+      "ownerActualAuditSHA256": "1b3225754a72e56071380034cc21630f05910d481b818f53682abf0ffefb7892",
+      "rootIndependentActualAuditSHA256": "451a6cd36b888bdc4a86433c58d2175a953122f52c30fbb8a277ce5af70c1e78",
+      "actualTarModes": "Source4545 regular0664+6 executable0775, controller4546+6; Git100644/100755 type/executable and every blob/byte verified; no false0644/0755 archive claim",
+      "results": [
+        {
+          "path": "backend/third_party/req/client.go",
+          "bytes": 56029,
+          "rawSHA256": "a7db0cc3329c062028c6178e74546fc498c34b76bbfe3390d3c97e207e0355e8",
+          "formattedSHA256": "a7db0cc3329c062028c6178e74546fc498c34b76bbfe3390d3c97e207e0355e8",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/dump.go",
+          "bytes": 8784,
+          "rawSHA256": "a86c9b287ac7148f4764f10e5f2cc2a33ddd9e8c323bc1844ad5590f8c1c33c6",
+          "formattedSHA256": "a86c9b287ac7148f4764f10e5f2cc2a33ddd9e8c323bc1844ad5590f8c1c33c6",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/transport.go",
+          "bytes": 114700,
+          "rawSHA256": "0332c0ed2c207ee4597d9c7e90e93c8cadd6dbc7a017a3715d67c242ba4a81cb",
+          "formattedSHA256": "0332c0ed2c207ee4597d9c7e90e93c8cadd6dbc7a017a3715d67c242ba4a81cb",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/request.go",
+          "bytes": 39575,
+          "rawSHA256": "26df88a2481a72bb99b1ad6c8c0b9b14513bf411c91624356d8ae091547e739b",
+          "formattedSHA256": "26df88a2481a72bb99b1ad6c8c0b9b14513bf411c91624356d8ae091547e739b",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/dump/dump.go",
+          "bytes": 8043,
+          "rawSHA256": "94ec67e462133fa86624f44470c2e96f01b518ffbd1eb519b2ac9ea3a01e84f6",
+          "formattedSHA256": "94ec67e462133fa86624f44470c2e96f01b518ffbd1eb519b2ac9ea3a01e84f6",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/parallel_download.go",
+          "bytes": 14004,
+          "rawSHA256": "12a1f6b0d737a8b9d4704738ac74b74726d961c94caf49a76939aacf04bc89ca",
+          "formattedSHA256": "12a1f6b0d737a8b9d4704738ac74b74726d961c94caf49a76939aacf04bc89ca",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/client_test.go",
+          "bytes": 21376,
+          "rawSHA256": "3cfa2a3783fade7d199fc3846be0d9d2addbbec744c6ecffe6c60e7b66a48cd5",
+          "formattedSHA256": "3cfa2a3783fade7d199fc3846be0d9d2addbbec744c6ecffe6c60e7b66a48cd5",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/request_test.go",
+          "bytes": 29402,
+          "rawSHA256": "97ce4e027d244dde752f4400698f32bdae76b0130726005d28bd2b4865d1f4c3",
+          "formattedSHA256": "97ce4e027d244dde752f4400698f32bdae76b0130726005d28bd2b4865d1f4c3",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/dump_ownership_contract_test.go",
+          "bytes": 33740,
+          "rawSHA256": "d5bb80fd28f93e6cc357b6c93ff0109cefdde64b0c6ef60d16660bb806c67db1",
+          "formattedSHA256": "d5bb80fd28f93e6cc357b6c93ff0109cefdde64b0c6ef60d16660bb806c67db1",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/dump_ownership_peer_test.go",
+          "bytes": 4392,
+          "rawSHA256": "b4bc25cfed158317d932ca7ebd64cc1fbad0ce5fc8c25936519b82a50599a841",
+          "formattedSHA256": "b4bc25cfed158317d932ca7ebd64cc1fbad0ce5fc8c25936519b82a50599a841",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/receive_flow_contract_test.go",
+          "bytes": 13697,
+          "rawSHA256": "307939900113a97b360202b6d17e35a3b784d26019ffd2967d7dae1396007a70",
+          "formattedSHA256": "307939900113a97b360202b6d17e35a3b784d26019ffd2967d7dae1396007a70",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/transport.go",
+          "bytes": 95229,
+          "rawSHA256": "074f9a87a963011ad5ae0ea486192e4ec8b22856b75fb66f279398babc89382e",
+          "formattedSHA256": "074f9a87a963011ad5ae0ea486192e4ec8b22856b75fb66f279398babc89382e",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/custom_tls_handshake_peer_test.go",
+          "bytes": 4096,
+          "rawSHA256": "3bcec75f5164e0efcb0f86aa6e1e35857f2d8211d80ca95120d2c093af7d401b",
+          "formattedSHA256": "3bcec75f5164e0efcb0f86aa6e1e35857f2d8211d80ca95120d2c093af7d401b",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/custom_tls_handshake_test.go",
+          "bytes": 7617,
+          "rawSHA256": "4ce46f6b1edef1172ee3ede6cfe5735e8947545705705398f0602d635c00d999",
+          "formattedSHA256": "4ce46f6b1edef1172ee3ede6cfe5735e8947545705705398f0602d635c00d999",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/custom_tls_handshake_boundary_test.go",
+          "bytes": 9419,
+          "rawSHA256": "159641ae9df4de70f0c39d4fa07934d88280165adaf79bce62cdda0e0ac62419",
+          "formattedSHA256": "159641ae9df4de70f0c39d4fa07934d88280165adaf79bce62cdda0e0ac62419",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/custom_tls_handshake_peer_test.go",
+          "bytes": 3726,
+          "rawSHA256": "6121032f5593da00a43a65ae341aa1e405b8c46341c693faea209011756a7626",
+          "formattedSHA256": "6121032f5593da00a43a65ae341aa1e405b8c46341c693faea209011756a7626",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/custom_tls_handshake_test.go",
+          "bytes": 9379,
+          "rawSHA256": "c778bb6009f452e9251896396f2ce04b0a6c3516bc5b89d965dadbaa77438f63",
+          "formattedSHA256": "c778bb6009f452e9251896396f2ce04b0a6c3516bc5b89d965dadbaa77438f63",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_peer_test.go",
+          "bytes": 4521,
+          "rawSHA256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9",
+          "formattedSHA256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_request_contract_test.go",
+          "bytes": 6404,
+          "rawSHA256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847",
+          "formattedSHA256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_form_contract_test.go",
+          "bytes": 7305,
+          "rawSHA256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9",
+          "formattedSHA256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_dump_contract_test.go",
+          "bytes": 6345,
+          "rawSHA256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa",
+          "formattedSHA256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_policy_contract_test.go",
+          "bytes": 13542,
+          "rawSHA256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392",
+          "formattedSHA256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/h1_boundary_contract_test.go",
+          "bytes": 13070,
+          "rawSHA256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752",
+          "formattedSHA256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/public_default_contract_test.go",
+          "bytes": 10615,
+          "rawSHA256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
+          "formattedSHA256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/bisect/contracts_test.go",
+          "bytes": 17548,
+          "rawSHA256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5",
+          "formattedSHA256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/coverage_contract_peer_test.go",
+          "bytes": 8697,
+          "rawSHA256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47",
+          "formattedSHA256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/coverage_frame_contract_test.go",
+          "bytes": 8358,
+          "rawSHA256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb",
+          "formattedSHA256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/coverage_transport_contract_test.go",
+          "bytes": 25748,
+          "rawSHA256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8",
+          "formattedSHA256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/client_wrapper.go",
+          "bytes": 30244,
+          "rawSHA256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+          "formattedSHA256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/safari_wrapper_contract_test.go",
+          "bytes": 8687,
+          "rawSHA256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3",
+          "formattedSHA256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/bisect/bisect.go",
+          "bytes": 23993,
+          "rawSHA256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+          "formattedSHA256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+          "allFourActualExit0Empty": true
+        }
+      ],
+      "scope": "Actual remote formatting only. Current31 Go bytes equal returned raw/formatted; no code changed on import. No runtime/race/Windows/coverage/security or whole-PR approval."
+    },
+    "formattedNewFilesBeforeH2StateCorrection": {
       "H1-BOUNDARY-CONTRACTS.md": {
         "bytes": 2993,
         "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
@@ -2327,101 +2577,765 @@
         "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
       }
     },
+    "candidateNewFilesBeforeRemoteReformat": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 14104,
+        "sha256": "3434e3cddf466e251edc5780f71bd88fb52478c6135640ad0539f36909cee5d6"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 7795,
+        "sha256": "1c4790e11007620d35f9658bf88a122b3ee7064d69bb4af70ab4f8a18dd9a932"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "h2StateObservationCorrection": {
+      "rawSource": "530281903887998bd5a76cdf5250a0639eaed3cf",
+      "originalFailedHead": "c82356c8115678ff669e088a3d44dc955482b3c4",
+      "failedPRRun": 40853052089,
+      "independentSourceReviewSHA256": "d568e328df1481e00686312509d381f4bfb4a45271efdf39e8738ac3358b4084",
+      "scope": "Only test helpers observe actual connection fields under cc.mu because copied ClientConn has no State API. All51 H2 and880 total identities, real queued/cancel/closed assertions and production bytes unchanged.",
+      "status": "Independently reviewed test-only correction; actual remote formatter40993088337 confirms all30 already canonical. Exact-head compilation/race and51 H2 runtime tests remain pending; c823 actual failure retained."
+    },
+    "remoteFormattingHistory": [
+      {
+        "controller": "76edf129ca97fc02b4768b2d4645bfca298ba6a4",
+        "source": "ae7260bba43cc8ed07db94513a42b73e5b9d104b",
+        "sourceTree": "490495c4230c87d3ffa8aa709956192fa4318f40",
+        "run": 40850936373,
+        "artifact": 12887291284,
+        "artifactBytes": 31139810,
+        "artifactSHA256": "d6722072133d5f509e67351352d990b49e38bd87209768add419ca968d6f2906",
+        "independentActualReceiptSHA256": "bb3abf540b4c4c67e64a36512dcc5a7bd1900a085dae6c02f8294808438bb1a0",
+        "actualInputs": 30,
+        "actualOperations": 120,
+        "retained17AllUnchanged": true,
+        "additional13Changed": 11,
+        "additional13Unchanged": 2,
+        "importedFiles": [
+          {
+            "path": "backend/third_party/req/public_api_peer_test.go",
+            "rawSHA256": "5d72efd18c41479663a769d0b5def3c8391322e8ee16b295ce64e02cd3f8fe94",
+            "formattedSHA256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/public_api_request_contract_test.go",
+            "rawSHA256": "073144d58abe4f028648fd84c602c0ed979782d1e78f9b284bd13a6887a8f070",
+            "formattedSHA256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/public_api_form_contract_test.go",
+            "rawSHA256": "ec5a8418a2f72ef12303d95ab73027be6b642df630eebffcdfa94276df22b88d",
+            "formattedSHA256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/public_api_dump_contract_test.go",
+            "rawSHA256": "6fbcb8f3e3ec28b849bba4bc615beb071dca332b07d766f1b292900c9464f947",
+            "formattedSHA256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/public_api_policy_contract_test.go",
+            "rawSHA256": "75a14d013814e489f98a8d74b64014aba8b7475b5afd6055d24a93e221e26f64",
+            "formattedSHA256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/h1_boundary_contract_test.go",
+            "rawSHA256": "3c49bae413b492c305a5524620c91aaf5317f01977d323e9c2bfd2292665dddd",
+            "formattedSHA256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/public_default_contract_test.go",
+            "rawSHA256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
+            "formattedSHA256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/bisect/contracts_test.go",
+            "rawSHA256": "c654bad6f9b66e40d5a837e4b893c7b690d0ed1555b6bf1320e4d95c0f974dc4",
+            "formattedSHA256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/coverage_contract_peer_test.go",
+            "rawSHA256": "20f1a7346ee7cea7bf5a78bc604198a09631bc738fdd72114a8c646e879976e2",
+            "formattedSHA256": "182a4d2ab724411aa1dd61d41adb7f05983fb442e6dd685c4ac480116820cc2f",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/coverage_frame_contract_test.go",
+            "rawSHA256": "c31c9e2a746eeb31087b21ad82910f622b0a1e2fd974cf48de1f0884ba22c79b",
+            "formattedSHA256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/coverage_transport_contract_test.go",
+            "rawSHA256": "66652c34870f37a02d77e104101d52f57c264dfc1c1ce063f95eb040028e1345",
+            "formattedSHA256": "44f94032c3f36024d3fb73bfdbed681a081ea52b19e16ba0c3e3cb6e845bc06b",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/client_wrapper.go",
+            "rawSHA256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+            "formattedSHA256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/safari_wrapper_contract_test.go",
+            "rawSHA256": "269cf1d768aa3143d7668d7c974e2a4882d20a5991635d8ae071efacff4a5d2c",
+            "formattedSHA256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3",
+            "changed": true
+          }
+        ],
+        "policy": "Only exact remote-formatted copies were imported; original raw author/provenance records remain historical. Formatting evidence is not runtime, race, Windows, full source acceptance or coverage evidence."
+      },
+      {
+        "controller": "57925247d9a6ba999830ffdf99e11aee7848935d",
+        "source": "f6817b25ffa762025a4557284c71bb83f43260c8",
+        "sourceTree": "6110d81880f6d93a297e8a04e63f2dc8117b6778",
+        "run": 40993088337,
+        "artifact": 12950420576,
+        "artifactBytes": 31131993,
+        "artifactSHA256": "70fce3f29a0570a67a5069e251ec9fc87fa07f51603d1ec54543b13f79e49519",
+        "independentActualReceiptSHA256": "34e6cd31240eae5f006c29528407e463fe76b42a10a9ed281df664fde3f1ddd8",
+        "actualInputs": 30,
+        "actualOperations": 120,
+        "actualRaw0Unchanged": 30,
+        "actualRaw1Changed": 0,
+        "actualOther90ZeroEmpty": true,
+        "currentGoMatchesExactFormattedOutput": [
+          {
+            "path": "backend/third_party/req/client.go",
+            "bytes": 56029,
+            "sha256": "a7db0cc3329c062028c6178e74546fc498c34b76bbfe3390d3c97e207e0355e8",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/dump.go",
+            "bytes": 8784,
+            "sha256": "a86c9b287ac7148f4764f10e5f2cc2a33ddd9e8c323bc1844ad5590f8c1c33c6",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/transport.go",
+            "bytes": 114700,
+            "sha256": "0332c0ed2c207ee4597d9c7e90e93c8cadd6dbc7a017a3715d67c242ba4a81cb",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/request.go",
+            "bytes": 39575,
+            "sha256": "26df88a2481a72bb99b1ad6c8c0b9b14513bf411c91624356d8ae091547e739b",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/dump/dump.go",
+            "bytes": 8043,
+            "sha256": "94ec67e462133fa86624f44470c2e96f01b518ffbd1eb519b2ac9ea3a01e84f6",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/parallel_download.go",
+            "bytes": 14004,
+            "sha256": "12a1f6b0d737a8b9d4704738ac74b74726d961c94caf49a76939aacf04bc89ca",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/client_test.go",
+            "bytes": 21376,
+            "sha256": "3cfa2a3783fade7d199fc3846be0d9d2addbbec744c6ecffe6c60e7b66a48cd5",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/request_test.go",
+            "bytes": 29402,
+            "sha256": "97ce4e027d244dde752f4400698f32bdae76b0130726005d28bd2b4865d1f4c3",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/dump_ownership_contract_test.go",
+            "bytes": 33740,
+            "sha256": "d5bb80fd28f93e6cc357b6c93ff0109cefdde64b0c6ef60d16660bb806c67db1",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/dump_ownership_peer_test.go",
+            "bytes": 4392,
+            "sha256": "b4bc25cfed158317d932ca7ebd64cc1fbad0ce5fc8c25936519b82a50599a841",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/receive_flow_contract_test.go",
+            "bytes": 13697,
+            "sha256": "307939900113a97b360202b6d17e35a3b784d26019ffd2967d7dae1396007a70",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/transport.go",
+            "bytes": 95229,
+            "sha256": "074f9a87a963011ad5ae0ea486192e4ec8b22856b75fb66f279398babc89382e",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/custom_tls_handshake_peer_test.go",
+            "bytes": 4096,
+            "sha256": "3bcec75f5164e0efcb0f86aa6e1e35857f2d8211d80ca95120d2c093af7d401b",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/custom_tls_handshake_test.go",
+            "bytes": 7617,
+            "sha256": "4ce46f6b1edef1172ee3ede6cfe5735e8947545705705398f0602d635c00d999",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/custom_tls_handshake_boundary_test.go",
+            "bytes": 9419,
+            "sha256": "159641ae9df4de70f0c39d4fa07934d88280165adaf79bce62cdda0e0ac62419",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/custom_tls_handshake_peer_test.go",
+            "bytes": 3726,
+            "sha256": "6121032f5593da00a43a65ae341aa1e405b8c46341c693faea209011756a7626",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/custom_tls_handshake_test.go",
+            "bytes": 9379,
+            "sha256": "c778bb6009f452e9251896396f2ce04b0a6c3516bc5b89d965dadbaa77438f63",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/public_api_peer_test.go",
+            "bytes": 4521,
+            "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/public_api_request_contract_test.go",
+            "bytes": 6404,
+            "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/public_api_form_contract_test.go",
+            "bytes": 7305,
+            "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/public_api_dump_contract_test.go",
+            "bytes": 6345,
+            "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/public_api_policy_contract_test.go",
+            "bytes": 13542,
+            "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/h1_boundary_contract_test.go",
+            "bytes": 13070,
+            "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/public_default_contract_test.go",
+            "bytes": 10615,
+            "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/bisect/contracts_test.go",
+            "bytes": 17548,
+            "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/coverage_contract_peer_test.go",
+            "bytes": 8697,
+            "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/coverage_frame_contract_test.go",
+            "bytes": 8358,
+            "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/coverage_transport_contract_test.go",
+            "bytes": 25748,
+            "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/client_wrapper.go",
+            "bytes": 30244,
+            "sha256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/safari_wrapper_contract_test.go",
+            "bytes": 8687,
+            "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3",
+            "changed": false
+          }
+        ],
+        "policy": "All thirty existing source Go files already equal the actual new formatted copies; no Go bytes changed during import. Prior format evidence remains historical; new format evidence is not compilation/runtime/race/coverage acceptance."
+      }
+    ],
+    "candidateNewFilesAfterBisectRaceRepair": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 15841,
+        "sha256": "fd48644ce51e6888d303ca4a4a461ff6b30c15089505e3ce5ab0e0389faa59ba"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 9675,
+        "sha256": "acb558bb0fc14462a91be693b7b29481801b02a0a0c459870d537e1751e9b99b"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "formattedNewFilesBeforeBisectRaceRepair": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 14104,
+        "sha256": "3434e3cddf466e251edc5780f71bd88fb52478c6135640ad0539f36909cee5d6"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 7795,
+        "sha256": "1c4790e11007620d35f9658bf88a122b3ee7064d69bb4af70ab4f8a18dd9a932"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "candidateNewFilesBeforeCombinedRemoteFormat": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 15841,
+        "sha256": "fd48644ce51e6888d303ca4a4a461ff6b30c15089505e3ce5ab0e0389faa59ba"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 9675,
+        "sha256": "acb558bb0fc14462a91be693b7b29481801b02a0a0c459870d537e1751e9b99b"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "remoteFormattingPreparation": {
+      "status": "PENDING: latest combined source requires actual remote31-file/124-operation formatter; prior30-file receipts retained unchanged as historical evidence",
+      "plannedInputs": 31,
+      "plannedOperations": 124,
+      "noLocalOr87Execution": true
+    },
+    "formattedNewFiles": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 15841,
+        "sha256": "fd48644ce51e6888d303ca4a4a461ff6b30c15089505e3ce5ab0e0389faa59ba"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 9675,
+        "sha256": "acb558bb0fc14462a91be693b7b29481801b02a0a0c459870d537e1751e9b99b"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    }
+  },
+  "bisectCacheRaceRepair": {
+    "authorization": "User: 允许在现有 #1712 内修复此竞态; 2026-10-30; no new issue/PR/batch or unrelated upstream changes",
+    "baseHead": "1898272d4fdb7f939e60fae11f0fc83cbf5cf8a0",
+    "actualRedHead": "c82356c8115678ff669e088a3d44dc955482b3c4",
+    "actualRedRun": 40853052089,
+    "actualRedJob": 123377058265,
+    "actualRedArtifact": 12888267228,
+    "actualRedArtifactSHA256": "c4e9241c2c47274b678a95df545d4a66ead9ef5c5f1aac8e0c8df3664cb88dbf",
+    "actualRedLeaf": "TestReqBisectContract_StackReports/concurrent_marker_lossy",
+    "problem": "Original ordinary eviction-hash range read races an atomic.StoreUint64 from another Matcher.stack call; actual original789 read and471 stack path retained.",
+    "repair": "Only eviction-hash range uses index and atomic.LoadUint64(&cache[i]); preserve lossy approximate dedup and existing atomic stores.",
+    "originalPath": "internal/bisect/bisect.go",
+    "originalBytes": 23969,
+    "originalSHA256": "de2e6582ffb06e9745167ae4ed820371b88c7b3af5a793d289a9997ebaedf916",
+    "candidateBytes": 23993,
+    "candidateSHA256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+    "productionAdaptationIndex": 17,
+    "sourcePartition": "112+18+2=132; first17 original adaptations and132 archive rows preserved; same per-file85 applied to eighteenth file",
+    "requiredCases": 112,
+    "reachabilityLimit": "Private library concurrency reproduced; ordinary HTTP/godebug runtime environment activation remains unproven.",
+    "status": "Source independently reviewed and remotely formatted; final-head actual race/coverage NOTRUN and original RED retained, not LGTM",
     "remoteFormatting": {
-      "controller": "76edf129ca97fc02b4768b2d4645bfca298ba6a4",
-      "source": "ae7260bba43cc8ed07db94513a42b73e5b9d104b",
-      "sourceTree": "490495c4230c87d3ffa8aa709956192fa4318f40",
-      "run": 40850936373,
-      "artifact": 12887291284,
-      "artifactBytes": 31139810,
-      "artifactSHA256": "d6722072133d5f509e67351352d990b49e38bd87209768add419ca968d6f2906",
-      "independentActualReceiptSHA256": "bb3abf540b4c4c67e64a36512dcc5a7bd1900a085dae6c02f8294808438bb1a0",
-      "actualInputs": 30,
-      "actualOperations": 120,
-      "retained17AllUnchanged": true,
-      "additional13Changed": 11,
-      "additional13Unchanged": 2,
-      "importedFiles": [
-        {
-          "path": "backend/third_party/req/public_api_peer_test.go",
-          "rawSHA256": "5d72efd18c41479663a769d0b5def3c8391322e8ee16b295ce64e02cd3f8fe94",
-          "formattedSHA256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9",
-          "changed": true
-        },
-        {
-          "path": "backend/third_party/req/public_api_request_contract_test.go",
-          "rawSHA256": "073144d58abe4f028648fd84c602c0ed979782d1e78f9b284bd13a6887a8f070",
-          "formattedSHA256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847",
-          "changed": true
-        },
-        {
-          "path": "backend/third_party/req/public_api_form_contract_test.go",
-          "rawSHA256": "ec5a8418a2f72ef12303d95ab73027be6b642df630eebffcdfa94276df22b88d",
-          "formattedSHA256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9",
-          "changed": true
-        },
-        {
-          "path": "backend/third_party/req/public_api_dump_contract_test.go",
-          "rawSHA256": "6fbcb8f3e3ec28b849bba4bc615beb071dca332b07d766f1b292900c9464f947",
-          "formattedSHA256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa",
-          "changed": true
-        },
-        {
-          "path": "backend/third_party/req/public_api_policy_contract_test.go",
-          "rawSHA256": "75a14d013814e489f98a8d74b64014aba8b7475b5afd6055d24a93e221e26f64",
-          "formattedSHA256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392",
-          "changed": true
-        },
-        {
-          "path": "backend/third_party/req/h1_boundary_contract_test.go",
-          "rawSHA256": "3c49bae413b492c305a5524620c91aaf5317f01977d323e9c2bfd2292665dddd",
-          "formattedSHA256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752",
-          "changed": true
-        },
-        {
-          "path": "backend/third_party/req/public_default_contract_test.go",
-          "rawSHA256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
-          "formattedSHA256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
-          "changed": false
-        },
-        {
-          "path": "backend/third_party/req/internal/bisect/contracts_test.go",
-          "rawSHA256": "c654bad6f9b66e40d5a837e4b893c7b690d0ed1555b6bf1320e4d95c0f974dc4",
-          "formattedSHA256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5",
-          "changed": true
-        },
-        {
-          "path": "backend/third_party/req/internal/http2/coverage_contract_peer_test.go",
-          "rawSHA256": "20f1a7346ee7cea7bf5a78bc604198a09631bc738fdd72114a8c646e879976e2",
-          "formattedSHA256": "182a4d2ab724411aa1dd61d41adb7f05983fb442e6dd685c4ac480116820cc2f",
-          "changed": true
-        },
-        {
-          "path": "backend/third_party/req/internal/http2/coverage_frame_contract_test.go",
-          "rawSHA256": "c31c9e2a746eeb31087b21ad82910f622b0a1e2fd974cf48de1f0884ba22c79b",
-          "formattedSHA256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb",
-          "changed": true
-        },
-        {
-          "path": "backend/third_party/req/internal/http2/coverage_transport_contract_test.go",
-          "rawSHA256": "66652c34870f37a02d77e104101d52f57c264dfc1c1ce063f95eb040028e1345",
-          "formattedSHA256": "44f94032c3f36024d3fb73bfdbed681a081ea52b19e16ba0c3e3cb6e845bc06b",
-          "changed": true
-        },
-        {
-          "path": "backend/third_party/req/client_wrapper.go",
-          "rawSHA256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
-          "formattedSHA256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
-          "changed": false
-        },
-        {
-          "path": "backend/third_party/req/safari_wrapper_contract_test.go",
-          "rawSHA256": "269cf1d768aa3143d7668d7c974e2a4882d20a5991635d8ae071efacff4a5d2c",
-          "formattedSHA256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3",
-          "changed": true
-        }
-      ],
-      "policy": "Only exact remote-formatted copies were imported; original raw author/provenance records remain historical. Formatting evidence is not runtime, race, Windows, full source acceptance or coverage evidence."
+      "run": 41029611698,
+      "path": "internal/bisect/bisect.go",
+      "actualBytes": 23993,
+      "actualSHA256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+      "allFourActualExit0EmptyAndRawUnchanged": true
+    }
+  },
+  "existing1712Oct30Composition": {
+    "scope": "Only existing saved prerequisites plus explicitly authorized TLS/Safari/Vue/bisect blocking repairs; no new issue/PR/batch",
+    "h2TestObservationSource": "530281903887998bd5a76cdf5250a0639eaed3cf",
+    "h2IndependentRootReviewSHA256": "d568e328df1481e00686312509d381f4bfb4a45271efdf39e8738ac3358b4084",
+    "vueSourceC": "338d1a0fc8fad85cb368c6b80a8779e15162405a",
+    "vueIndependentReviewSHA256": "558416b39f14eda2d8ee0d5966e5fc9859897ba9839e838d7cf3691682a8a2ba",
+    "vueReconciledLockSHA256": "82ef5a10dccd9ba11d6c58b9d267bd7ff4da9b1f63a3467175f1ef35c317a72b",
+    "vuePermanentExactTenCI": "8b43d3ce287298aa29560d33ddeef65b04ca70bd",
+    "vueCIIndependentRootReviewSHA256": "4e822f46dcf55764a703ce218864f0092f4e60d20edf62c00fb87672456aa00e",
+    "bisectSource": "49092cfb7ce02a1f8e0ff6cd60973ee48bf0e39d",
+    "bisectIndependentRootReviewSHA256": "3a8f96a7c1eefc2a74f672a49d1f9848674d0be9f55b66cb2b85cf707c20c67c",
+    "bisectIndependentCrossReviewSHA256": "371804aadd9527e419d69772702ecc2c29b4d016a11dc89fbb72d1a60854bd89",
+    "sourcePartition": "112 unchanged+18 production adaptations+2 original test adaptations=132; prior17 and original132 rows retained",
+    "status": "All authorized source repairs independently reviewed and current31Go actual remote formatting verified; final metadata needs independent review and all actual final-head checks. New decode security failure remains blocking and outside current production repair authorization. No wholePR LGTM/merge.",
+    "combinedSourceIndependentReviewSHA256": "75723b75e5f07f39d3e09e2a490932c5f134db848032dffea20363b31eb72ce8",
+    "vueNode22ObserverCompatibility": {
+      "source": "9c45b47cffe58c61ce4135997736a2073927f13c",
+      "actualPriorFailureRun": 41029611595,
+      "actualPriorFailureJob": 123975892084,
+      "description": "Existing DOMPurify evidence helper still required Node20 after authorized Vue CI moved to22. Only exact Node-major guard moved20→22; every package/source/integrity/pnpm9 check retained.",
+      "independentReviewSHA256": "93422da81d8bd7ba8c32c90d52d3ff3707f8a00d1a60f19cbcadc7bd42b8e1c4",
+      "runtime": "New guard final-head execution pending"
+    },
+    "additionalSecurityBlocker": {
+      "advisory": "GHSA-qr28-fpjm-wq7f",
+      "actualRun": 41029611595,
+      "actualJob": 123975892084,
+      "state": "Actual unchanged policy rejects installed decode-uri-component0.4.1; separate repair scope under readonly investigation, not authorized/applied; no waiver or new exception",
+      "reachability": "Application exploit/Node remote-entry reachability unproven"
     }
   }
 }

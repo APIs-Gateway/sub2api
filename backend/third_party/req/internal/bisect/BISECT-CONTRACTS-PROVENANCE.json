@@ -1,6 +1,6 @@
 {
   "author": "/root/register605_oct28",
-  "scope": "Only existing1712 actual complete-Git85 deficit, private bisect library contract tests; no production/gates/denominator/sharedregistry changes. Original605/132 intact.",
+  "scope": "Historical initial112-case test-source scope: Only existing1712 actual complete-Git85 deficit, private bisect library contract tests; no production/gates/denominator/sharedregistry changes. Original605/132 intact.",
   "base": "29ea1fcb4c2366aee00d8f2a75c0b0edf3676880",
   "branch": "codex/req-bisect-contracts-1712",
   "worktree": "/Users/luyaolyu/.codex/worktrees/req-bisect-contracts-1712/sub2api",
@@ -315,10 +315,32 @@
     "No claim all360 uncoveredlines or either85 gate becomes passed"
   ],
   "package": "github.com/imroc/req/v3/internal/bisect",
-  "sourceStatus": "RAW, NOTRUN. New tests and documentation only. Exact-head independent review, actual remote formatter, actual named/full -race and unchanged coverage gates remain required.",
+  "sourceStatus": "Authorized eviction-cache atomic-read repair RAW source; updated verifier controls NOTRUN; actual named/full race/format/coverage and independent exact-head review remain required.",
   "newOwnedFiles": [
     "internal/bisect/contracts_test.go",
     "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json",
     "internal/bisect/BISECT-CONTRACTS.md"
-  ]
+  ],
+  "authorizedCacheRaceRepair": {
+    "authorization": "User: 允许在现有 #1712 内修复此竞态; 2026-10-30; no new issue/PR/batch or unrelated upstream changes",
+    "baseHead": "1898272d4fdb7f939e60fae11f0fc83cbf5cf8a0",
+    "actualRedHead": "c82356c8115678ff669e088a3d44dc955482b3c4",
+    "actualRedRun": 40853052089,
+    "actualRedJob": 123377058265,
+    "actualRedArtifact": 12888267228,
+    "actualRedArtifactSHA256": "c4e9241c2c47274b678a95df545d4a66ead9ef5c5f1aac8e0c8df3664cb88dbf",
+    "actualRedLeaf": "TestReqBisectContract_StackReports/concurrent_marker_lossy",
+    "problem": "Original ordinary eviction-hash range read races an atomic.StoreUint64 from another Matcher.stack call; actual original789 read and471 stack path retained.",
+    "repair": "Only eviction-hash range uses index and atomic.LoadUint64(&cache[i]); preserve lossy approximate dedup and existing atomic stores.",
+    "originalPath": "internal/bisect/bisect.go",
+    "originalBytes": 23969,
+    "originalSHA256": "de2e6582ffb06e9745167ae4ed820371b88c7b3af5a793d289a9997ebaedf916",
+    "candidateBytes": 23993,
+    "candidateSHA256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+    "productionAdaptationIndex": 17,
+    "sourcePartition": "112+18+2=132; first17 original adaptations and132 archive rows preserved; same per-file85 applied to eighteenth file",
+    "requiredCases": 112,
+    "reachabilityLimit": "Private library concurrency reproduced; ordinary HTTP/godebug runtime environment activation remains unproven.",
+    "status": "RAW production repair and verifier controls; runtime/format/coverage NOTRUN; original failing race evidence retained; not LGTM"
+  }
 }
