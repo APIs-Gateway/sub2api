@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
 
 // AvailableGroupRef 渠道视图中关联分组的简要信息。
@@ -219,6 +221,8 @@ func openAILongContextTierForModel(model string) (openAILongContextTier, bool) {
 
 	var pricing *LiteLLMModelPricing
 	switch {
+	case openai.IsGPT61TerraModelSpelling(m):
+		pricing = openAIGPT61TerraFallbackPricing
 	case strings.HasPrefix(m, "gpt-5.6-sol"):
 		pricing = openAIGPT56SolFallbackPricing
 	case strings.HasPrefix(m, "gpt-5.6-terra"):

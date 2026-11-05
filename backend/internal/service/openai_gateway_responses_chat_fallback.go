@@ -81,8 +81,8 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	billingModel := resolveOpenAIForwardModel(account, originalModel, "")
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 	gpt61Err := validateGPT61SolCompatRequest(body, upstreamModel)
-	if gpt61Err == nil && openai.IsGPT61SolModelSpelling(upstreamModel) && len(responsesReq.Tools) > 0 {
-		gpt61Err = errGPT61SolChatOnlyTools()
+	if gpt61Err == nil && openai.RequiresResponsesForToolCalls(upstreamModel) && len(responsesReq.Tools) > 0 {
+		gpt61Err = errResponsesRequiredForTools(upstreamModel)
 	}
 	if gpt61Err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{

@@ -109,6 +109,24 @@ var (
 		SupportsPromptCaching:               true,
 	}
 	// GPT-6.1 Sol（同步自上游 9688571a8）：与 GPT-6 Sol 同价，仅 cache read 减半。
+	// GPT-6.1 Terra（同步自上游 342366742）：1 / 5 / cache write 1.25 / cache read 0.05（USD per 1M），priority 2 倍。
+	openAIGPT61TerraFallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   1e-06,
+		InputCostPerTokenPriority:           2e-06,
+		OutputCostPerToken:                  5e-06,
+		OutputCostPerTokenPriority:          1e-05,
+		CacheCreationInputTokenCost:         1.25e-06,
+		CacheCreationInputTokenCostPriority: 2.5e-06,
+		CacheReadInputTokenCost:             5e-08,
+		CacheReadInputTokenCostPriority:     1e-07,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
 	openAIGPT61SolFallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:                   2e-06,
 		InputCostPerTokenPriority:           4e-06,
@@ -689,6 +707,12 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		if entry.LongContextOutputCostMultiplier != nil {
 			pricing.LongContextOutputCostMultiplier = *entry.LongContextOutputCostMultiplier
 		}
+		if !(entry.LongContextInputTokenThreshold != nil ||
+			entry.LongContextInputCostMultiplier != nil ||
+			entry.LongContextOutputCostMultiplier != nil) &&
+			longContextDerivationEnabled(modelName) {
+			deriveLongContextFromAbove272KFields(pricing)
+		}
 		if entry.OutputCostPerImage != nil {
 			pricing.OutputCostPerImage = *entry.OutputCostPerImage
 		}
@@ -1171,7 +1195,7 @@ func normalizeModelNameForPricing(model string) string {
 		}
 		// gpt-6-sol-max / gpt-6-luna-openai-compact / gpt-6.1-sol-max 等本地后缀写法归一到官方 ID，
 		// 让目录里的 gpt-6-sol / gpt-6-luna / gpt-6.1-sol 条目（含自定义覆盖）优先命中。
-		if openai.IsGPT6SolOrLunaModelSpelling(canonical) || openai.IsGPT61SolModelSpelling(canonical) {
+		if openai.IsGPT6SolOrLunaModelSpelling(canonical) || openai.IsGPT61SolModelSpelling(canonical) || openai.IsGPT61TerraModelSpelling(canonical) {
 			return normalizeKnownOpenAICodexModel(canonical)
 		}
 		// Mirror normalizeKnownOpenAICodexModel's bare "gpt-5.6" -> "gpt-5.6-sol"
@@ -1367,8 +1391,14 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 		}
 	}
 
-	// GPT-6.1 Sol / GPT-6 Sol / Luna 必须在基础版本号回退之前处理：generateOpenAIModelVariants
+	// GPT-6.1 Terra / GPT-6.1 Sol / GPT-6 Sol / Luna 必须在基础版本号回退之前处理：generateOpenAIModelVariants
 	// 会把 gpt-6-sol 截成 gpt-6，从而错误命中 Astra（gpt-6 别名）的价格。
+	if openai.IsGPT61TerraModelSpelling(model) {
+		if pricing, ok := s.pricingData["gpt-6.1-terra"]; ok {
+			return pricing
+		}
+		return openAIGPT61TerraFallbackPricing
+	}
 	if openai.IsGPT61SolModelSpelling(model) {
 		if pricing, ok := s.pricingData["gpt-6.1-sol"]; ok {
 			return pricing
@@ -1501,6 +1531,44 @@ func (s *PricingService) generateOpenAIModelVariants(model string, datePattern *
 	}
 
 	return variants
+}
+
+// longContextDerivationEnabled 决定哪些模型在远端目录只给 *_above_272k_tokens 绝对价
+// （没有 long_context_* 字段）时，把绝对价折算成阈值+倍率。目前只有 GPT-6.1 Terra：
+// 其它 GPT-6 模型（gpt-6 / gpt-6-sol / gpt-6.1-sol / gpt-6-luna / gpt-6-astra）是否加价尚未
+// 定，保持现状不折算，扣费不变。以后要给新模型启用，只改这一处。
+func longContextDerivationEnabled(model string) bool {
+	return openai.IsGPT61TerraModelSpelling(model)
+}
+
+// deriveLongContextFromAbove272KFields 把 input/output 的 *_above_272k_tokens 绝对价折算成
+// 272K 阈值 + 倍率（above 价 ÷ 基础价），并清掉四个绝对价字段：computeTokenBreakdown 在绝对价
+// >0 时会直接覆盖已选好的 priority 价，priority / flex 的长上下文价必须由倍率叠加得到。
+// cache 读写不单独折算，跟随输入倍率（官方 cache above 档恰为基础价 × 输入倍率）。
+func deriveLongContextFromAbove272KFields(pricing *LiteLLMModelPricing) {
+	if pricing == nil ||
+		pricing.LongContextInputTokenThreshold > 0 ||
+		pricing.LongContextInputCostMultiplier > 0 ||
+		pricing.LongContextOutputCostMultiplier > 0 {
+		return
+	}
+	if pricing.InputCostPerTokenAbove272KTokens <= 0 && pricing.OutputCostPerTokenAbove272KTokens <= 0 {
+		return
+	}
+	inputMultiplier, outputMultiplier := 1.0, 1.0
+	if pricing.InputCostPerTokenAbove272KTokens > 0 && pricing.InputCostPerToken > 0 {
+		inputMultiplier = pricing.InputCostPerTokenAbove272KTokens / pricing.InputCostPerToken
+	}
+	if pricing.OutputCostPerTokenAbove272KTokens > 0 && pricing.OutputCostPerToken > 0 {
+		outputMultiplier = pricing.OutputCostPerTokenAbove272KTokens / pricing.OutputCostPerToken
+	}
+	pricing.LongContextInputTokenThreshold = openAI272KLongContextThreshold
+	pricing.LongContextInputCostMultiplier = inputMultiplier
+	pricing.LongContextOutputCostMultiplier = outputMultiplier
+	pricing.InputCostPerTokenAbove272KTokens = 0
+	pricing.OutputCostPerTokenAbove272KTokens = 0
+	pricing.CacheCreationInputTokenCostAbove272KTokens = 0
+	pricing.CacheReadInputTokenCostAbove272KTokens = 0
 }
 
 // GetStatus 获取服务状态

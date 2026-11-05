@@ -42,6 +42,9 @@ func normalizeKnownOpenAICodexModel(model string) string {
 
 	// GPT-6.1 Sol / GPT-6 Sol/Luna 必须先于下面的 Contains 族匹配，且只认官方 ID 与已知
 	// effort/compact 后缀，避免 gpt-6-solitude 之类未知型号被误归族。
+	if openai.IsGPT61TerraModelSpelling(normalized) {
+		return "gpt-6.1-terra"
+	}
 	if openai.IsGPT61SolModelSpelling(normalized) {
 		return "gpt-6.1-sol"
 	}
@@ -103,9 +106,9 @@ func isOpenAIGPT6AstraModel(model string) bool {
 	return normalized == "gpt-6" || normalized == "gpt-6-astra"
 }
 
-// isOpenAIGPT6Model 判断是否 GPT-6 家族（Astra 及其裸别名 gpt-6、Sol、Luna、6.1 Sol）。
+// isOpenAIGPT6Model 判断是否 GPT-6 家族（Astra 及其裸别名 gpt-6、Sol、Luna、6.1 Sol、6.1 Terra）。
 func isOpenAIGPT6Model(model string) bool {
-	return isOpenAIGPT6AstraModel(model) || openai.IsGPT6SolOrLunaModelSpelling(model) || openai.IsGPT61SolModelSpelling(model)
+	return isOpenAIGPT6AstraModel(model) || openai.IsGPT6SolOrLunaModelSpelling(model) || openai.IsGPT61SolModelSpelling(model) || openai.IsGPT61TerraModelSpelling(model)
 }
 
 func appendUsageBillingModelCandidate(candidates []string, seen map[string]struct{}, model string) []string {

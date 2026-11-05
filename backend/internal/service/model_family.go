@@ -62,6 +62,8 @@ func openAIModelFamily(model string) string {
 		return ""
 	}
 	switch {
+	case openai.IsGPT61TerraModelSpelling(canonical):
+		return "gpt-6.1-terra"
 	case openai.IsGPT61SolModelSpelling(canonical):
 		return "gpt-6.1-sol"
 	case openai.IsGPT6SolOrLunaModelSpelling(canonical):

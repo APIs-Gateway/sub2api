@@ -22,6 +22,8 @@ var DefaultModels = []Model{
 	{ID: "gpt-6-astra", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra"},
 	{ID: "gpt-6", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 (Astra)"},
 	{ID: "gpt-6.1-sol", Object: "model", Created: 1790640000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.1 Sol"},
+	// Created 照搬上游（1704067200 = 2024-01-01，疑似占位值），待上游修正后再同步。
+	{ID: "gpt-6.1-terra", Object: "model", Created: 1704067200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.1 Terra"},
 	{ID: "gpt-6-sol", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Sol"},
 	{ID: "gpt-6-luna", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Luna"},
 	{ID: "gpt-5.6", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 (Sol)"},
@@ -227,6 +229,35 @@ func IsGPT61SolModelSpelling(model string) bool {
 		return true
 	}
 	return isDateSnapshotSuffix(suffix)
+}
+
+// IsGPT61TerraModelSpelling recognizes gpt-6.1-terra and its local
+// effort/compact spellings (同步自上游 342366742)。Terra 支持 reasoning.effort=none。
+// 另外 minimal 与 YYYY-MM-DD 日期快照写法也认：网关（codexVersionModelPrefixes）会把它们
+// 转发成 gpt-6.1-terra，计费必须按同一个模型走（上游没有这两种写法，属 fork 的差异）。
+// -pro / -ultra 等未知后缀仍不是 Terra。
+func IsGPT61TerraModelSpelling(model string) bool {
+	canonical := CanonicalizeOpenAIModelAliasSpelling(model)
+	if canonical == "gpt-6.1-terra" {
+		return true
+	}
+	suffix, ok := strings.CutPrefix(canonical, "gpt-6.1-terra-")
+	if !ok {
+		return false
+	}
+	switch suffix {
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max", "openai-compact":
+		return true
+	default:
+		return isDateSnapshotSuffix(suffix)
+	}
+}
+
+// RequiresResponsesForToolCalls reports whether the model must use the
+// Responses API for tool calls (GPT-6.1 Sol / Terra); Chat Completions-only
+// accounts must reject tool requests for them.
+func RequiresResponsesForToolCalls(model string) bool {
+	return IsGPT61SolModelSpelling(model) || IsGPT61TerraModelSpelling(model)
 }
 
 // ValidateGPT61SolReasoningEffort rejects disabled reasoning for GPT-6.1 Sol,
