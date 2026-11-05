@@ -707,9 +707,9 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		if entry.LongContextOutputCostMultiplier != nil {
 			pricing.LongContextOutputCostMultiplier = *entry.LongContextOutputCostMultiplier
 		}
-		if !(entry.LongContextInputTokenThreshold != nil ||
-			entry.LongContextInputCostMultiplier != nil ||
-			entry.LongContextOutputCostMultiplier != nil) &&
+		if entry.LongContextInputTokenThreshold == nil &&
+			entry.LongContextInputCostMultiplier == nil &&
+			entry.LongContextOutputCostMultiplier == nil &&
 			longContextDerivationEnabled(modelName) {
 			deriveLongContextFromAbove272KFields(pricing)
 		}
