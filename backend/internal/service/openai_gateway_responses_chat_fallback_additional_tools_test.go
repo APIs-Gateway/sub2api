@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -115,4 +116,37 @@ func TestForwardResponses_ChatFallbackAdditionalToolsNonStreamingRestoresNamespa
 	require.Equal(t, "exec", gjson.Get(out, `output.#(type=="custom_tool_call").name`).String(), out)
 	require.Equal(t, "functions", gjson.Get(out, `output.#(type=="custom_tool_call").namespace`).String(), out)
 	require.Equal(t, `{}`, gjson.Get(out, `output.#(type=="function_call").arguments`).String(), out)
+}
+
+// additional_tools 项结构不合法（tools 不是数组）时 EffectiveResponsesTools 报错，
+// 应回 400 invalid_request_error，且不得向上游发请求。
+func TestForwardResponses_ChatFallbackInvalidAdditionalToolsRejectedBeforeUpstream(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6","stream":false,"input":[{"type":"additional_tools","tools":"not-an-array"},{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}`)
+	c, rec := newAdditionalToolsContext(body)
+	upstream := &httpUpstreamRecorder{}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+	result, err := svc.forwardResponsesViaRawChatCompletions(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
+	require.Empty(t, upstream.requests, "invalid tools must be rejected before any upstream request")
+	require.Nil(t, upstream.lastReq)
+}
+
+// 只有 additional_tools、没有顶层 tools 时，gpt-6.1 系列仍须被「需要 Responses」守卫拦下。
+func TestForwardResponses_ChatFallbackAdditionalToolsOnlyHitsGPT61Guard(t *testing.T) {
+	body := []byte(`{"model":"public","input":[{"type":"additional_tools","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)
+	c, rec := newAdditionalToolsContext(body)
+	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"model_mapping": map[string]any{"public": "gpt-6.1-sol"}}}
+	upstream := &httpUpstreamRecorder{}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+	_, err := svc.forwardResponsesViaRawChatCompletions(context.Background(), c, account, body)
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
+	require.Contains(t, rec.Body.String(), "gpt-6.1-sol")
+	require.Empty(t, upstream.requests)
 }
