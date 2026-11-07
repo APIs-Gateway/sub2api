@@ -10,6 +10,9 @@ import (
 )
 
 func NormalizeOpenAICompatRequestedModel(model string) string {
+	if openai.IsGPT61TerraModelSpelling(model) {
+		return "gpt-6.1-terra"
+	}
 	if openai.IsGPT61SolModelSpelling(model) {
 		return "gpt-6.1-sol"
 	}
@@ -28,6 +31,24 @@ func NormalizeOpenAICompatRequestedModel(model string) string {
 func applyOpenAICompatModelNormalization(req *apicompat.AnthropicRequest) {
 	if req == nil {
 		return
+	}
+
+	// GPT-6.1 Terra（同步自上游 342366742）：effort 后缀同样原样保留为
+	// output_config.effort，但 Terra 支持 none，不做 Sol 的 none/minimal 拦截。
+	if openai.IsGPT61TerraModelSpelling(req.Model) {
+		canonical := openai.CanonicalizeOpenAIModelAliasSpelling(req.Model)
+		effort, _ := strings.CutPrefix(canonical, "gpt-6.1-terra-")
+		switch effort {
+		case "none", "low", "medium", "high", "xhigh", "max":
+			req.Model = "gpt-6.1-terra"
+			if req.OutputConfig == nil {
+				req.OutputConfig = &apicompat.AnthropicOutputConfig{}
+			}
+			if req.OutputConfig.Effort == "" {
+				req.OutputConfig.Effort = effort
+			}
+			return
+		}
 	}
 
 	// GPT-6.1 Sol 的 effort 后缀原样保留为 output_config.effort：通用映射会把 max
@@ -171,8 +192,9 @@ func validateGPT61SolCompatRequest(body []byte, model string) error {
 	return nil
 }
 
-// errGPT61SolChatOnlyTools is returned when a GPT-6.1 Sol request with tools
-// would be served through a Chat Completions-only account.
-func errGPT61SolChatOnlyTools() error {
-	return fmt.Errorf("gpt-6.1-sol requires Responses for tool calls; this account only supports Chat Completions")
+// errResponsesRequiredForTools is returned when a GPT-6.1 Sol / Terra request
+// with tools would be served through a Chat Completions-only account. The
+// message carries the canonical model name (gpt-6.1-sol / gpt-6.1-terra).
+func errResponsesRequiredForTools(model string) error {
+	return fmt.Errorf("%s requires Responses for tool calls; this account only supports Chat Completions", normalizeKnownOpenAICodexModel(model))
 }

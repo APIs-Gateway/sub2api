@@ -322,6 +322,12 @@ describe('UseKeyModal', () => {
       expect(parsed.provider.openai.models[model].variants).toHaveProperty('none')
       expect(parsed.provider.openai.models[model].variants).toHaveProperty('max')
     }
+    expect(parsed.provider.openai.models['gpt-6.1-terra']).toEqual({
+      name: 'GPT-6.1 Terra',
+      limit: { context: 1050000, output: 128000 },
+      options: { store: false },
+      variants: { none: {}, low: {}, medium: {}, high: {}, xhigh: {}, max: {} }
+    })
     expect(parsed.provider.openai.models['gpt-6-sol'].name).toBe('GPT-6 Sol')
     expect(parsed.provider.openai.models['gpt-6-luna'].name).toBe('GPT-6 Luna')
   })

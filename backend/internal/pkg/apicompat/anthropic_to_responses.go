@@ -63,6 +63,12 @@ func AnthropicToResponses(req *AnthropicRequest) (*ResponsesRequest, error) {
 
 	// An explicit thinking disable takes precedence over output_config.effort.
 	effort := anthropicReasoningEffort(req)
+	// GPT-6.1 Sol / Terra 原生支持 max：不要把 output_config.effort=max 降成 xhigh
+	// （同步自上游 342366742）。thinking 明确关闭（effort=none）时仍以 none 为准。
+	if (openai.IsGPT61SolModelSpelling(req.Model) || openai.IsGPT61TerraModelSpelling(req.Model)) &&
+		req.OutputConfig != nil && req.OutputConfig.Effort == "max" && effort != "none" {
+		effort = "max"
+	}
 	out.Reasoning = &ResponsesReasoning{
 		Effort: effort,
 	}

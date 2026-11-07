@@ -522,6 +522,22 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextInputMultiplier:         2,
 		LongContextOutputMultiplier:        1.5,
 	}
+	// GPT-6.1 Terra（同步自上游 342366742）：输入 1 / 输出 5 / cache write 1.25 / cache read 0.05
+	// 美元每百万 token；priority 为 2 倍；>272K 输入 2 倍、输出 1.5 倍。
+	// cache write 为输入价 1.25 倍，fork 无「显式 cache-write」标记，价格表值直接生效。
+	s.fallbackPrices["gpt-6.1-terra"] = &ModelPricing{
+		InputPricePerToken:                 1e-6,
+		InputPricePerTokenPriority:         2e-6,
+		OutputPricePerToken:                5e-6,
+		OutputPricePerTokenPriority:        10e-6,
+		CacheCreationPricePerToken:         1.25e-6,
+		CacheCreationPricePerTokenPriority: 2.5e-6,
+		CacheReadPricePerToken:             0.05e-6,
+		CacheReadPricePerTokenPriority:     0.1e-6,
+		LongContextInputThreshold:          272_000,
+		LongContextInputMultiplier:         2,
+		LongContextOutputMultiplier:        1.5,
+	}
 	s.fallbackPrices["gpt-6-luna"] = &ModelPricing{
 		InputPricePerToken:                 0.1e-6,
 		InputPricePerTokenPriority:         0.2e-6,
@@ -1045,7 +1061,7 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	// OpenAI（GPT-5 / Codex 族）：仅匹配已知型号，避免未知 OpenAI 型号误计价。
 	if normalized := normalizeKnownOpenAICodexModel(modelLower); normalized != "" {
 		switch normalized {
-		case "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna":
+		case "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna":
 			return s.fallbackPrices[normalized]
 		case "gpt-6-astra":
 			return s.fallbackPrices["gpt-6-astra"]

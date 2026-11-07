@@ -11108,7 +11108,8 @@ func normalizeOpenAIReasoningEffort(raw string) string {
 
 func normalizeOpenAIReasoningEffortForModel(raw, model string) string {
 	// GPT-6 Sol/Luna 官方支持 reasoning.effort=none，保留原值而不是折叠为空。
-	if strings.EqualFold(strings.TrimSpace(raw), "none") && openai.IsGPT6SolOrLunaModelSpelling(model) {
+	// GPT-6.1 Terra 同样支持 none（Sol 不支持，由兼容路径校验拒绝）。
+	if strings.EqualFold(strings.TrimSpace(raw), "none") && (openai.IsGPT6SolOrLunaModelSpelling(model) || openai.IsGPT61TerraModelSpelling(model)) {
 		return "none"
 	}
 	if strings.EqualFold(strings.TrimSpace(raw), "max") && (isOpenAIGPT6Model(model) || isOpenAIGPT56Model(model)) {
