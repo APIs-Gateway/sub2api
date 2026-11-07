@@ -9897,8 +9897,8 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		usageLog.BillingType = BillingTypeSubscription
 	}
 
-	// 限时活动：纯钱包结算被打折时，usage_log 记打折后的倍率和实扣（结算已按折后金额扣钱包）。
-	// 有生效套餐卡的请求（SubscriptionID != nil）不打折，这里不动。
+	// 限时活动：钱包承担的部分被打折（含有卡、额度用尽后溢出到钱包的部分）时，usage_log 记实付口径：
+	// actual_cost = 卡部分（原价）+ 折后钱包部分，rate_multiplier 同比例折算；卡部分不打折、完全由卡覆盖时 PaidRatio=1，不动。
 	applyPromoWalletRateToUsageLog(usageLog, result)
 
 	// 透支改了 users.monthly_overdraft_count → 失效该用户全部 key 的鉴权快照，
@@ -9971,7 +9971,7 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		deps.billingCacheService.QueueDeductBalance(p.User.ID, walletDebit)
 	}
 
-	// 限时活动：Key 限速窗口 / user×platform 配额按「实付」口径累计（纯钱包打折时为折后金额，f=1 时与原先一致）。
+	// 限时活动：Key 限速窗口 / user×platform 配额按「实付」口径累计（打折时为折后实付金额，含部分走卡的混合行；PaidRatio=1 时与原先一致）。
 	paidCost := paidActualCost(p.Cost.ActualCost, result)
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() {
 		deps.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(p.APIKey.ID, paidCost)

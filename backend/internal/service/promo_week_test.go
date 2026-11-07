@@ -104,20 +104,166 @@ func TestPromoFactors_MissingOrInvalidSettingsAreOff(t *testing.T) {
 
 func TestPromoMultiplierBounds(t *testing.T) {
 	now := promoAt(9, 12)
-	for _, mult := range []string{"", "0", "-1", "1", "0.8", "abc", "NaN", "15"} {
+	// 契约「不生效」值（空、<=0、==1）：只关掉这一侧，另一侧不受影响
+	for _, mult := range []string{"", "0", "-1", "1"} {
 		v := promoTestValues()
 		v[SettingKeyPromoSubscriptionDailyMultiplier] = mult
 		setPromoForTest(t, v)
 		require.Equal(t, 1.0, promoDailyFactor(1, now), "sub mult %q", mult)
 		require.Equal(t, 0.52, PromoBalanceRateFactor(1, now), "balance side independent of sub mult %q", mult)
 	}
-	for _, rate := range []string{"", "0", "-0.5", "1", "1.2", "abc"} {
+	for _, rate := range []string{"", "0", "-0.5", "1"} {
 		v := promoTestValues()
 		v[SettingKeyPromoBalanceRateMultiplier] = rate
 		setPromoForTest(t, v)
 		require.Equal(t, 1.0, PromoBalanceRateFactor(1, now), "balance rate %q", rate)
 		require.Equal(t, 1.5, promoDailyFactor(1, now), "sub side independent of rate %q", rate)
 	}
+	// 越界/无法解析：整份配置作废（从未有过有效配置 → 关闭）
+	for _, mult := range []string{"0.8", "abc", "NaN", "15"} {
+		v := promoTestValues()
+		v[SettingKeyPromoSubscriptionDailyMultiplier] = mult
+		setPromoForTest(t, v)
+		require.Equal(t, 1.0, promoDailyFactor(1, now), "sub mult %q", mult)
+		require.Equal(t, 1.0, PromoBalanceRateFactor(1, now), "invalid config rejected as a whole %q", mult)
+	}
+	for _, rate := range []string{"1.2", "abc"} {
+		v := promoTestValues()
+		v[SettingKeyPromoBalanceRateMultiplier] = rate
+		setPromoForTest(t, v)
+		require.Equal(t, 1.0, PromoBalanceRateFactor(1, now), "balance rate %q", rate)
+		require.Equal(t, 1.0, promoDailyFactor(1, now), "invalid config rejected as a whole %q", rate)
+	}
+}
+
+func TestParsePromoSettings_Status(t *testing.T) {
+	p, st := parsePromoSettings(nil)
+	require.Nil(t, p)
+	require.Equal(t, promoParseOff, st)
+	p, st = parsePromoSettings(map[string]string{SettingKeyPromoStartAt: "  ", SettingKeyPromoExcludedUserIDs: ""})
+	require.Nil(t, p)
+	require.Equal(t, promoParseOff, st, "全部为空白 = 有意关闭")
+	// 时间有效、两侧倍率都「不生效」= 有意关闭
+	v := promoTestValues()
+	v[SettingKeyPromoSubscriptionDailyMultiplier] = "1"
+	v[SettingKeyPromoBalanceRateMultiplier] = ""
+	_, st = parsePromoSettings(v)
+	require.Equal(t, promoParseOff, st)
+	p, st = parsePromoSettings(promoTestValues())
+	require.NotNil(t, p)
+	require.Equal(t, promoParseOK, st)
+	for name, mutate := range map[string]func(map[string]string){
+		"end<=start":   func(m map[string]string) { m[SettingKeyPromoEndAt] = m[SettingKeyPromoStartAt] },
+		"bad end":      func(m map[string]string) { m[SettingKeyPromoEndAt] = "x" },
+		"missing end":  func(m map[string]string) { delete(m, SettingKeyPromoEndAt) },
+		"bad excluded": func(m map[string]string) { m[SettingKeyPromoExcludedUserIDs] = "4242,abc" },
+		"neg excluded": func(m map[string]string) { m[SettingKeyPromoExcludedUserIDs] = "-3" },
+		"sub too big":  func(m map[string]string) { m[SettingKeyPromoSubscriptionDailyMultiplier] = "15" },
+		"sub <1":       func(m map[string]string) { m[SettingKeyPromoSubscriptionDailyMultiplier] = "0.5" },
+		"sub inf":      func(m map[string]string) { m[SettingKeyPromoSubscriptionDailyMultiplier] = "Inf" },
+		"balance >1":   func(m map[string]string) { m[SettingKeyPromoBalanceRateMultiplier] = "1.5" },
+		"balance junk": func(m map[string]string) { m[SettingKeyPromoBalanceRateMultiplier] = "x" },
+	} {
+		m := promoTestValues()
+		mutate(m)
+		p, st = parsePromoSettings(m)
+		require.Nil(t, p, name)
+		require.Equal(t, promoParseInvalid, st, name)
+	}
+}
+
+// 有效 → 写坏：仍沿用旧值；有效 → 全部清空：关闭；从未有效 → 非法：关闭。
+func TestPromo_RefreshInvalidKeepsPreviousValid(t *testing.T) {
+	var mu sync.Mutex
+	vals := promoTestValues()
+	SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		out := map[string]string{}
+		for k, v := range vals {
+			out[k] = v
+		}
+		return out, nil
+	})
+	t.Cleanup(func() { SetPromoSettingsSource(nil) })
+	now := promoAt(9, 12)
+	set := func(m map[string]string) {
+		mu.Lock()
+		vals = m
+		mu.Unlock()
+		require.NoError(t, refreshPromoSettings())
+	}
+	require.Equal(t, 1.5, promoDailyFactor(1, now))
+
+	// 写坏（排除名单一项解析不了）：沿用旧值，旧排除名单也继续生效
+	bad := promoTestValues()
+	bad[SettingKeyPromoExcludedUserIDs] = "4242,abc"
+	set(bad)
+	require.Equal(t, 1.5, promoDailyFactor(1, now))
+	require.Equal(t, 0.52, PromoBalanceRateFactor(1, now))
+	require.Equal(t, 1.0, PromoBalanceRateFactor(4242, now))
+
+	// END<=START、倍率越界同样沿用旧值
+	bad = promoTestValues()
+	bad[SettingKeyPromoEndAt] = bad[SettingKeyPromoStartAt]
+	set(bad)
+	require.Equal(t, 1.5, promoDailyFactor(1, now))
+	bad = promoTestValues()
+	bad[SettingKeyPromoBalanceRateMultiplier] = "1.5"
+	set(bad)
+	require.Equal(t, 0.52, PromoBalanceRateFactor(1, now))
+
+	// 改回另一份有效配置：正常采用
+	good := promoTestValues()
+	good[SettingKeyPromoBalanceRateMultiplier] = "0.6"
+	set(good)
+	require.Equal(t, 0.6, PromoBalanceRateFactor(1, now))
+
+	// 全部清空：有意关闭
+	set(map[string]string{})
+	require.Equal(t, 1.0, promoDailyFactor(1, now))
+	require.Equal(t, 1.0, PromoBalanceRateFactor(1, now))
+
+	// 清空后再写坏：此前没有有效配置（已关闭）→ 保持关闭
+	bad = promoTestValues()
+	bad[SettingKeyPromoSubscriptionDailyMultiplier] = "abc"
+	set(bad)
+	require.Equal(t, 1.0, promoDailyFactor(1, now))
+}
+
+func TestPromo_NeverValidThenInvalidStaysOff(t *testing.T) {
+	bad := promoTestValues()
+	bad[SettingKeyPromoExcludedUserIDs] = "abc"
+	setPromoForTest(t, bad)
+	require.Equal(t, 1.0, promoDailyFactor(1, promoAt(9, 12)))
+	require.Equal(t, 1.0, PromoBalanceRateFactor(1, promoAt(9, 12)))
+}
+
+// 首次读库失败后，在第一次成功前按短间隔重试，成功后恢复正常间隔。
+func TestPromoSettingsRefresher_StartupRetryUntilFirstSuccess(t *testing.T) {
+	var calls atomic.Int32
+	var failUntil atomic.Int32 // 前 N 次调用失败
+	failUntil.Store(3)
+	r := NewPromoSettingsRefresher(func(ctx context.Context, keys []string) (map[string]string, error) {
+		n := calls.Add(1)
+		if n <= failUntil.Load() {
+			return nil, errors.New("db not ready")
+		}
+		return promoTestValues(), nil
+	}, time.Hour) // 正常间隔很长：能在测试时间内成功只可能是启动重试
+	r.retryInterval = 5 * time.Millisecond
+	r.Start()
+	t.Cleanup(func() { r.Stop(); SetPromoSettingsSource(nil) })
+	now := promoAt(9, 12)
+
+	require.Equal(t, int32(1), calls.Load(), "启动同步加载一次，失败")
+	require.Equal(t, 1.0, promoDailyFactor(1, now), "加载失败期间按关闭处理")
+	require.Eventually(t, func() bool { return promoDailyFactor(1, now) == 1.5 }, 2*time.Second, 5*time.Millisecond)
+	require.Equal(t, int32(4), calls.Load(), "第 4 次调用（第 3 次重试）成功")
+
+	// 成功之后恢复正常（很长的）间隔：不再按重试间隔读库
+	time.Sleep(60 * time.Millisecond)
+	require.Equal(t, int32(4), calls.Load())
 }
 
 func TestPromoBalanceRateFactor_WindowAndExcluded(t *testing.T) {

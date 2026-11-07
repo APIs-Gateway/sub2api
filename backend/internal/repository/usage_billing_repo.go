@@ -293,6 +293,7 @@ func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, off
 	if card != nil {
 		card.ApplyPromo(userID, now)
 	}
+	// 与预占容量（billingInflightCapacity 的钱包 ÷f）必须使用同一个 PromoBalanceRateFactor，口径不能分叉。
 	walletRate := service.PromoBalanceRateFactor(userID, now)
 	settled := service.SettleWindowWithWalletRate(card, &wallet, officialCost, multiplier, walletRate, now)
 	paidRatio := 1.0
