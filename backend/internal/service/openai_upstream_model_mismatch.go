@@ -72,9 +72,41 @@ var upstreamModelDateSuffixRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8}|(0
 //  5. 同族 reasoning / 日期后缀剥离：任一方去掉已知后缀（codexVersionModelPrefixes + isKnownCodexModelSuffix）
 //     后等于另一方放行（gpt-5.4-high ↔ gpt-5.4）。不用任何 Contains 启发式。
 //  6. Codex 自动路由：sent（去 provider 前缀）在 upstreamAutoRoutedModels 里一律放行；got 是它不放行。
+//  7. 路由 / 区域前缀容忍：号池类上游按区域节点回显 "cn:glm-5.3-flash" 这种 "<前缀>:<模型>"。
+//     任一方形如 "<前缀>:<rest>"（前缀 upstreamModelRoutePrefixRe：不含 "/" 与 ":" 的 1–16 位短标识）
+//     时，只剥第一个、只剥一层 "<前缀>:"，再按 1–6 严格比对；剥完仍不同照拦
+//     （cn:grok-4.7 对 deepseek-v4.1-flash 仍是不一致）。不用任何 Contains 启发式。
 func upstreamModelMatches(sent, got string) bool {
 	sent = strings.ToLower(strings.TrimSpace(sent))
 	got = strings.ToLower(strings.TrimSpace(got))
+	if sent == "" || got == "" {
+		return true
+	}
+	if upstreamModelMatchesCore(sent, got) {
+		return true
+	}
+	strippedSent, sentCut := stripUpstreamModelRoutePrefix(sent)
+	strippedGot, gotCut := stripUpstreamModelRoutePrefix(got)
+	if !sentCut && !gotCut {
+		return false
+	}
+	return upstreamModelMatchesCore(strippedSent, strippedGot)
+}
+
+// upstreamModelRoutePrefixRe：路由 / 区域前缀的合法形态（入参已小写）。
+var upstreamModelRoutePrefixRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,15}$`)
+
+// stripUpstreamModelRoutePrefix 去掉第一个 "<前缀>:"（仅一层）；前缀不合法或剩余为空时原样返回 false。
+func stripUpstreamModelRoutePrefix(model string) (string, bool) {
+	prefix, rest, ok := strings.Cut(model, ":")
+	if !ok || rest == "" || !upstreamModelRoutePrefixRe.MatchString(prefix) {
+		return model, false
+	}
+	return rest, true
+}
+
+// upstreamModelMatchesCore 是规则 1–6，入参已小写去空白。
+func upstreamModelMatchesCore(sent, got string) bool {
 	if sent == "" || got == "" {
 		return true
 	}
