@@ -217,13 +217,13 @@ func TestCheckUpstreamModelMismatch_SetsBlockedOnlyWhenReturningFailover(t *test
 func TestCheckUpstreamModelMismatch_GrokObserveOnly(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	svc := &OpenAIGatewayService{cfg: &config.Config{}}
-	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformGrok}, "req", nil, "grok-4.3", "grok-4.3-0709", true, true, OpenAIUsage{})
+	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformGrok}, "req", nil, "grok-4.3", "grok-4.3-fast", true, true, OpenAIUsage{})
 	require.Nil(t, err, "grok 不一致只打标不 failover")
 	mark := GetOpsUpstreamModelMismatch(c)
 	require.NotNil(t, mark)
 	require.False(t, mark.Blocked)
 	require.Equal(t, "grok-4.3", mark.SentModel)
-	require.Equal(t, "grok-4.3-0709", mark.ResponseModel)
+	require.Equal(t, "grok-4.3-fast", mark.ResponseModel)
 }
 
 // 池模式账号（中转自身是一池多 key）：单个内部节点偷换模型不应立刻把整个凭证换掉并降权，
@@ -323,4 +323,32 @@ func TestUpstreamModelMismatchLogger_UsesRequestScopedLogger(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	c.Request = req.WithContext(logger.IntoContext(req.Context(), reqLogger))
 	require.Same(t, reqLogger, upstreamModelMismatchLogger(c))
+}
+
+func TestUpstreamModelMatches_MMDDSuffixAndSymmetry(t *testing.T) {
+	cases := []struct {
+		name, sent, got string
+		want            bool
+	}{
+		{"prod: sent snapshot, got base", "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash", true},
+		{"prod: mapped to snapshot, got base", "deepseek-v4.1-flash", "deepseek-v4.1-flash", true},
+		{"prod: workbuddy prefixed substitution", "gpt-5.6-luna", "workbuddy/deepseek-v4.1-flash", false},
+		{"prod: gpt-6-luna to terra", "gpt-6-luna", "gpt-5.6-terra", false},
+		{"prod: gpt-6-luna to 5.6-luna", "gpt-6-luna", "gpt-5.6-luna", false},
+		{"dashed date sent->got", "gpt-4o", "gpt-4o-2024-08-06", true},
+		{"dashed date got->sent", "gpt-4o-2024-08-06", "gpt-4o", true},
+		{"mmdd sent->got", "gpt-4", "gpt-4-0613", true},
+		{"mmdd got->sent", "gpt-4-0613", "gpt-4", true},
+		{"compact date got->sent", "foo-20260901", "foo", true},
+		{"invalid mmdd month 20", "foo", "foo-2048", false},
+		{"invalid mmdd day 40", "foo", "foo-1340", false},
+		{"invalid mmdd 0000", "foo", "foo-0000", false},
+		{"invalid mmdd reverse", "foo-2048", "foo", false},
+		{"different tier with mmdd", "deepseek-v4.1-flash", "deepseek-v4.1-pro-1017", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, upstreamModelMatches(tc.sent, tc.got))
+		})
+	}
 }
