@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
 
@@ -117,6 +118,18 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat completions fallback request: %w", err)
 	}
+	// 会话信号：把客户端会话键（按 API Key 隔离）作为 prompt_cache_key 与 session_id
+	// 头转发给上游，让号池类上游能按会话粘到同一节点上，提高前缀缓存命中。
+	sessionKey := ""
+	if account.IsOpenAIApiKey() && (shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) || shouldAutoInjectPromptCacheKeyForCompat(originalModel)) {
+		sessionKey = isolateOpenAISessionID(getAPIKeyIDFromContext(c), rawResponsesChatFallbackSessionKey(c.Request.Header, responsesReq.PromptCacheKey))
+	}
+	if sessionKey != "" {
+		chatBody, err = sjson.SetBytes(chatBody, "prompt_cache_key", sessionKey)
+		if err != nil {
+			return nil, fmt.Errorf("set chat completions fallback prompt_cache_key: %w", err)
+		}
+	}
 	chatBody, err = s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, chatBody)
 	if err != nil {
 		var blocked *OpenAIFastBlockedError
@@ -171,6 +184,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 				upstreamReq.Header.Add(key, v)
 			}
 		}
+	}
+	if sessionKey != "" {
+		upstreamReq.Header.Set("session_id", generateSessionUUID(sessionKey))
 	}
 	if customUA := account.GetOpenAIUserAgent(); customUA != "" {
 		upstreamReq.Header.Set("user-agent", customUA)
@@ -237,6 +253,20 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 		return s.streamChatCompletionsAsResponses(c, resp, account, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
 	return s.bufferChatCompletionsAsResponses(c, resp, account, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+}
+
+// rawResponsesChatFallbackSessionKey 取客户端原始会话键：session-id / session_id 头、
+// conversation_id 头、body 的 prompt_cache_key，第一个非空者；都没有返回空串。
+func rawResponsesChatFallbackSessionKey(h http.Header, bodyPromptCacheKey string) string {
+	if v := openAICodexClientSessionIDHeader(h); v != "" {
+		return v
+	}
+	if h != nil {
+		if v := strings.TrimSpace(h.Get("conversation_id")); v != "" {
+			return v
+		}
+	}
+	return strings.TrimSpace(bodyPromptCacheKey)
 }
 
 func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(

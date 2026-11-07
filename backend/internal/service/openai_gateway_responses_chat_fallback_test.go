@@ -512,3 +512,175 @@ func TestForwardResponses_ChatFallbackRestoresReasoningFromCache(t *testing.T) {
 	// 明文 summary 的 item 被回写进缓存（自愈）。
 	require.Equal(t, "plain thinking", cache.snapshotSets()["item_plain"])
 }
+
+// --- 会话信号转发（prompt_cache_key + session_id 头） ---
+
+const chatFallbackSessionJSONResp = `{"id":"chatcmpl_s","object":"chat.completion","model":"gpt-5.4","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`
+
+const chatFallbackSessionSSEResp = `data: {"id":"c","object":"chat.completion.chunk","model":"gpt-5.4","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}
+
+data: {"id":"c","object":"chat.completion.chunk","model":"gpt-5.4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"c","object":"chat.completion.chunk","model":"gpt-5.4","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7}}
+
+data: [DONE]
+
+`
+
+type chatFallbackSessionCase struct {
+	model    string
+	stream   bool
+	headers  map[string]string
+	bodyKey  string
+	apiKeyID int64
+	account  *Account
+}
+
+// runChatFallbackSessionCase 走一次 Responses→Chat 兜底，返回上游收到的请求与 body。
+func runChatFallbackSessionCase(t *testing.T, tc chatFallbackSessionCase) (*http.Request, []byte) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+
+	model := tc.model
+	if model == "" {
+		model = "gpt-5.4"
+	}
+	body := `{"model":"` + model + `","input":"hello","stream":` + map[bool]string{true: "true", false: "false"}[tc.stream]
+	if tc.bodyKey != "" {
+		body += `,"prompt_cache_key":"` + tc.bodyKey + `"`
+	}
+	body += `}`
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	for k, v := range tc.headers {
+		c.Request.Header.Set(k, v)
+	}
+	if tc.apiKeyID != 0 {
+		c.Set("api_key", &APIKey{ID: tc.apiKeyID})
+	}
+
+	respBody, ctype := chatFallbackSessionJSONResp, "application/json"
+	if tc.stream {
+		respBody, ctype = chatFallbackSessionSSEResp, "text/event-stream"
+	}
+	// 上游响应里的 model 要与请求一致，避免触发模型不一致拦截。
+	respBody = strings.ReplaceAll(respBody, "gpt-5.4", model)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{ctype}},
+		Body:       io.NopCloser(strings.NewReader(respBody)),
+	}}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+	account := tc.account
+	if account == nil {
+		account = forceChatResponsesFallbackAccount()
+	}
+	result, err := svc.Forward(context.Background(), c, account, []byte(body))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "http://upstream.example/v1/chat/completions", upstream.lastReq.URL.String())
+	return upstream.lastReq, upstream.lastBody
+}
+
+func requireChatFallbackNoSessionSignals(t *testing.T, req *http.Request, body []byte) {
+	t.Helper()
+	require.False(t, gjson.GetBytes(body, "prompt_cache_key").Exists())
+	require.Empty(t, req.Header.Get("session_id"))
+}
+
+func TestForwardResponses_ChatFallbackForwardsSessionSignals(t *testing.T) {
+	const sid = "019a1b2c-0000-7000-8000-aaaaaaaaaaaa"
+	want := isolateOpenAISessionID(7, sid)
+	for _, stream := range []bool{false, true} {
+		req, body := runChatFallbackSessionCase(t, chatFallbackSessionCase{
+			stream:   stream,
+			apiKeyID: 7,
+			headers:  map[string]string{"session-id": sid},
+			bodyKey:  sid,
+		})
+		require.Equal(t, want, gjson.GetBytes(body, "prompt_cache_key").String(), "stream=%v", stream)
+		require.Equal(t, generateSessionUUID(want), req.Header.Get("session_id"), "stream=%v", stream)
+		require.Empty(t, req.Header.Get("conversation_id"))
+	}
+}
+
+func TestForwardResponses_ChatFallbackSessionKeyOrder(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers map[string]string
+		bodyKey string
+		raw     string
+	}{
+		{"hyphen header beats others", map[string]string{"session-id": "h1", "session_id": "h2", "conversation_id": "h3"}, "b1", "h1"},
+		{"underscore header", map[string]string{"session_id": "h2", "conversation_id": "h3"}, "b1", "h2"},
+		{"conversation_id header", map[string]string{"conversation_id": "h3"}, "b1", "h3"},
+		{"body prompt_cache_key only", nil, "b1", "b1"},
+		{"whitespace header falls through", map[string]string{"session-id": "   "}, "b1", "b1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, body := runChatFallbackSessionCase(t, chatFallbackSessionCase{apiKeyID: 3, headers: tt.headers, bodyKey: tt.bodyKey})
+			want := isolateOpenAISessionID(3, tt.raw)
+			require.Equal(t, want, gjson.GetBytes(body, "prompt_cache_key").String())
+			require.Equal(t, generateSessionUUID(want), req.Header.Get("session_id"))
+		})
+	}
+}
+
+func TestForwardResponses_ChatFallbackNoSessionKeyKeepsStatusQuo(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		req, body := runChatFallbackSessionCase(t, chatFallbackSessionCase{stream: stream, apiKeyID: 3})
+		requireChatFallbackNoSessionSignals(t, req, body)
+	}
+}
+
+func TestForwardResponses_ChatFallbackSessionKeyIsolatedPerAPIKey(t *testing.T) {
+	hdr := map[string]string{"session-id": "same-session"}
+	reqA, bodyA := runChatFallbackSessionCase(t, chatFallbackSessionCase{apiKeyID: 1, headers: hdr})
+	reqA2, bodyA2 := runChatFallbackSessionCase(t, chatFallbackSessionCase{apiKeyID: 1, headers: hdr})
+	reqB, bodyB := runChatFallbackSessionCase(t, chatFallbackSessionCase{apiKeyID: 2, headers: hdr})
+
+	keyA := gjson.GetBytes(bodyA, "prompt_cache_key").String()
+	require.NotEmpty(t, keyA)
+	require.Equal(t, keyA, gjson.GetBytes(bodyA2, "prompt_cache_key").String())
+	require.Equal(t, reqA.Header.Get("session_id"), reqA2.Header.Get("session_id"))
+	require.NotEqual(t, keyA, gjson.GetBytes(bodyB, "prompt_cache_key").String())
+	require.NotEqual(t, reqA.Header.Get("session_id"), reqB.Header.Get("session_id"))
+}
+
+func TestForwardResponses_ChatFallbackSessionSignalsSkippedForNonGPTModels(t *testing.T) {
+	account := forceChatResponsesFallbackAccount()
+	account.Credentials["base_url"] = "http://upstream.example"
+	for _, stream := range []bool{false, true} {
+		req, body := runChatFallbackSessionCase(t, chatFallbackSessionCase{
+			model:    "deepseek-chat",
+			stream:   stream,
+			apiKeyID: 3,
+			headers:  map[string]string{"session-id": "sess"},
+			bodyKey:  "sess",
+			account:  account,
+		})
+		requireChatFallbackNoSessionSignals(t, req, body)
+	}
+}
+
+func TestForwardResponses_ChatFallbackDoesNotForwardOtherClientHeaders(t *testing.T) {
+	req, _ := runChatFallbackSessionCase(t, chatFallbackSessionCase{
+		apiKeyID: 3,
+		headers: map[string]string{
+			"session-id":          "sess",
+			"conversation_id":     "conv",
+			"originator":          "codex_cli_rs",
+			"x-codex-turn-state":  "ts",
+			"x-codex-window-id":   "w",
+			"x-client-request-id": "rid",
+		},
+	})
+	for _, h := range []string{"session-id", "conversation_id", "originator", "x-codex-turn-state", "x-codex-window-id", "x-client-request-id"} {
+		require.Empty(t, req.Header.Values(h), h)
+	}
+	require.NotEmpty(t, req.Header.Get("session_id"))
+}
