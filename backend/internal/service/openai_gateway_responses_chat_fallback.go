@@ -120,8 +120,10 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	}
 	// 会话信号：把客户端会话键（按 API Key 隔离）作为 prompt_cache_key 与 session_id
 	// 头转发给上游，让号池类上游能按会话粘到同一节点上，提高前缀缓存命中。
+	// 门槛只看映射后的 upstreamModel：客户端发 gpt-5.x 但账号映射到 DeepSeek/Kimi
+	// 这类国产 chat 上游时不能多发这些字段（上游可能 400）。
 	sessionKey := ""
-	if account.IsOpenAIApiKey() && (shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) || shouldAutoInjectPromptCacheKeyForCompat(originalModel)) {
+	if account.IsOpenAIApiKey() && shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
 		sessionKey = isolateOpenAISessionID(getAPIKeyIDFromContext(c), rawResponsesChatFallbackSessionKey(c.Request.Header, responsesReq.PromptCacheKey))
 	}
 	if sessionKey != "" {

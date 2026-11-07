@@ -528,12 +528,13 @@ data: [DONE]
 `
 
 type chatFallbackSessionCase struct {
-	model    string
-	stream   bool
-	headers  map[string]string
-	bodyKey  string
-	apiKeyID int64
-	account  *Account
+	model     string
+	respModel string // 上游假响应里的 model；空则等于请求 model
+	stream    bool
+	headers   map[string]string
+	bodyKey   string
+	apiKeyID  int64
+	account   *Account
 }
 
 // runChatFallbackSessionCase 走一次 Responses→Chat 兜底，返回上游收到的请求与 body。
@@ -566,8 +567,14 @@ func runChatFallbackSessionCase(t *testing.T, tc chatFallbackSessionCase) (*http
 	if tc.stream {
 		respBody, ctype = chatFallbackSessionSSEResp, "text/event-stream"
 	}
-	// 上游响应里的 model 要与请求一致，避免触发模型不一致拦截。
-	respBody = strings.ReplaceAll(respBody, "gpt-5.4", model)
+	// 上游响应里的 model 必须等于实际发给上游的模型，否则会触发模型不一致拦截
+	// （502 failover）。常量响应模板写的是 gpt-5.4：请求模型不是 gpt-5.4 的用例
+	// （如直接发 deepseek-chat）靠这里替换；模型映射的用例显式传 respModel。
+	if tc.respModel != "" {
+		respBody = strings.ReplaceAll(respBody, "gpt-5.4", tc.respModel)
+	} else {
+		respBody = strings.ReplaceAll(respBody, "gpt-5.4", model)
+	}
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{ctype}},
@@ -683,4 +690,22 @@ func TestForwardResponses_ChatFallbackDoesNotForwardOtherClientHeaders(t *testin
 		require.Empty(t, req.Header.Values(h), h)
 	}
 	require.NotEmpty(t, req.Header.Get("session_id"))
+}
+
+func TestForwardResponses_ChatFallbackSessionSignalsSkippedWhenMappedToDeepSeek(t *testing.T) {
+	account := forceChatResponsesFallbackAccount()
+	account.Credentials["model_mapping"] = map[string]any{"gpt-5.4": "deepseek-chat"}
+	for _, stream := range []bool{false, true} {
+		req, body := runChatFallbackSessionCase(t, chatFallbackSessionCase{
+			model:     "gpt-5.4",
+			respModel: "deepseek-chat",
+			stream:    stream,
+			apiKeyID:  3,
+			headers:   map[string]string{"session-id": "sess"},
+			bodyKey:   "sess",
+			account:   account,
+		})
+		require.Equal(t, "deepseek-chat", gjson.GetBytes(body, "model").String(), "stream=%v", stream)
+		requireChatFallbackNoSessionSignals(t, req, body)
+	}
 }
