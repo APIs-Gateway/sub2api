@@ -196,6 +196,11 @@ type UsageBillingApplyResult struct {
 	// 即使套餐余额为 0、费用全由钱包层支付也仍应标 subscription。过期但 status='active' 的假
 	// active 卡会被惰性标 expired，不应填。
 	SubscriptionID *int64
+	// PaidRatio 限时活动对本次请求打折后的「实付/折前」比例（0<r<1）；0 或 1 = 未打折。
+	// 钱包承担的部分（含有生效卡、卡额度用尽后溢出到钱包的部分）打折，卡覆盖部分不打折，
+	// 因此 r = (卡部分 + 折后钱包部分) / 折前总额；纯钱包请求 r = 钱包折扣倍率。
+	// 上层据此把 usage_log 的 rate_multiplier / actual_cost 同步成实付口径，并用实付金额累计 Key 额度等计数。
+	PaidRatio float64
 	// DepletedSubscriptionGroupIDs 本次扣费把哪些订阅卡的剩余额度扣到 0（burn-down 用完），
 	// 并已在同一事务内即时标记为 expired（用完即失效，不必等到期日）。调用方据此失效对应
 	// (user, group) 的订阅缓存，让"我的订阅 / active 列表"立即反映。

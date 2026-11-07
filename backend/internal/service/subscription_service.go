@@ -1305,6 +1305,8 @@ func (s *SubscriptionService) CheckUsageLimits(ctx context.Context, sub *UserSub
 			monthlyLimit = group.MonthlyLimitUSD
 		}
 	}
+	// 限时活动：与结算/准入共用 PromoEffectiveLimits（只改局部指针副本，不写回卡）。
+	dailyLimit, weeklyLimit, monthlyLimit = PromoEffectiveLimitPtrs(sub.UserID, time.Now(), dailyLimit, weeklyLimit, monthlyLimit)
 	if usageWindowExhausted(dailyLimit, sub.DailyUsageUSD, additionalCost) {
 		return ErrDailyLimitExceeded
 	}

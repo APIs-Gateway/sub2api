@@ -131,6 +131,7 @@ type WindowSettleResult struct {
 	SubCover     float64 // 订阅覆盖的售价货币额（加到三窗口 usage；不扣钱包）
 	WalletPay    float64 // 从钱包正余额扣的售价货币额
 	WalletNegPay float64 // 最终缺口记入钱包负数的售价货币额
+	WalletRaw    float64 // 订阅覆盖之后、打折之前钱包承担的售价货币额（无折扣时 = WalletPay+WalletNegPay）
 }
 
 // AdmitWindow 准入（请求前）：有生效卡看三窗口余量、撞上限/无卡看钱包。先惰性重置窗口。
@@ -151,6 +152,16 @@ func AdmitWindow(c *SubWindow, w *WalletState, now time.Time) bool {
 // 这样分组/用户倍率、折扣与钱包和订阅额度的消耗保持同一口径。
 // 不含透支（由 ManualOverdraftWindow 显式触发）。就地变更 c、w；订阅 usage 只升、撞上限即停，溢出全落 w.Balance。
 func SettleWindow(c *SubWindow, w *WalletState, cost, multiplier float64, now time.Time) WindowSettleResult {
+	return SettleWindowWithWalletRate(c, w, cost, multiplier, 1, now)
+}
+
+// SettleWindowWithWalletRate 同 SettleWindow，但钱包实际承担的那部分（订阅覆盖之后的余额）再乘 walletRate
+// （限时活动的钱包折扣，0<walletRate<1；<=0 或 >=1 视为 1）。订阅覆盖部分按原价计入卡用量，不打折。
+// 结果里 SubCover 是卡部分（原价），WalletPay/WalletNegPay 是折后实扣；WalletRaw 是折前钱包部分。
+func SettleWindowWithWalletRate(c *SubWindow, w *WalletState, cost, multiplier, walletRate float64, now time.Time) WindowSettleResult {
+	if walletRate <= 0 || walletRate >= 1 {
+		walletRate = 1
+	}
 	if multiplier <= 0 {
 		multiplier = 1
 	}
@@ -181,6 +192,10 @@ func SettleWindow(c *SubWindow, w *WalletState, cost, multiplier float64, now ti
 			res.SubCover = cover
 		}
 	}
+
+	// 钱包承担的部分（折前）与折后实扣：活动期间只对这一部分打折。
+	res.WalletRaw = charge
+	charge *= walletRate
 
 	// 2) 钱包正余额：只用钱包正数部分
 	if charge > 0 && w.Balance > 0 {
@@ -250,10 +265,16 @@ func RefundableDaysByExpiry(expiresAt, now time.Time) int {
 
 // ToSubWindow 把订阅卡领域模型投影成三窗口引擎所需的最小状态。limit 字段为 *float64（NULL=不限→0）。
 func (s *UserSubscription) ToSubWindow() SubWindow {
+	return s.ToSubWindowAt(time.Now())
+}
+
+// ToSubWindowAt 同 ToSubWindow，但按 now 套用限时活动的有效限额放大（见 promo_week.go；无活动时与原值一致）。
+// 所有展示/准入/透支路径经此取限额，保持与结算同口径。
+func (s *UserSubscription) ToSubWindowAt(now time.Time) SubWindow {
 	if s == nil {
 		return SubWindow{}
 	}
-	return SubWindow{
+	w := SubWindow{
 		DailyLimitUSD:      nilToZero(s.DailyLimitUSD),
 		WeeklyLimitUSD:     nilToZero(s.WeeklyLimitUSD),
 		MonthlyLimitUSD:    nilToZero(s.MonthlyLimitUSD),
@@ -266,6 +287,8 @@ func (s *UserSubscription) ToSubWindow() SubWindow {
 		ExpiresAt:          s.ExpiresAt,
 		Status:             s.Status,
 	}
+	w.ApplyPromo(s.UserID, now)
+	return w
 }
 
 func nilToZero(p *float64) float64 {
