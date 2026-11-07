@@ -73,6 +73,8 @@ func billingInflightCapacity(ctx context.Context, tx *sql.Tx, userID int64, bala
 		c = &card
 	}
 	now := time.Now() // obtain current time after both locks, including midnight waits
+	// 限时活动：卡的有效限额放大（只作用于内存副本；钱包容量的 ÷f 放大见下方）。
+	c.ApplyPromo(userID, now)
 	allowed := service.AdmitWindow(c, &service.WalletState{Balance: balance}, now)
 	if !allowed && c != nil && now.Before(c.ExpiresAt) {
 		switch c.ExceededLimitCode() {
@@ -84,8 +86,15 @@ func billingInflightCapacity(ctx context.Context, tx *sql.Tx, userID int64, bala
 			return 0, false, service.ErrMonthlyLimitExceeded
 		}
 	}
+	// 限时活动：钱包承担的部分按折后金额结算，而预估金额仍是折前；等价地把钱包容量放大 1/f，
+	// 避免预占把本可通过的请求误拒（含有生效卡、溢出到钱包的部分）。卡部分的容量不变。
+	// 注意：这里与结算（settleSubscriptionWindow → SettleWindowWithWalletRate）必须使用同一个
+	// service.PromoBalanceRateFactor，二者口径不能分叉。
 	capacity := math.Max(balance, 0)
-	if c != nil && c.Status == service.SubscriptionStatusActive && now.Before(c.ExpiresAt) {
+	if f := service.PromoBalanceRateFactor(userID, now); f > 0 && f < 1 {
+		capacity /= f
+	}
+	if c.IsActive(now) {
 		capacity += c.SubRemaining()
 	}
 	return capacity, allowed, nil

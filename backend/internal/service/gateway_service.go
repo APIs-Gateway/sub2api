@@ -9869,7 +9869,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
 		postUsageBilling(ctx, p, deps)
-		recordPublicBenefitIPSpend(ctx, deps, p, usageLog)
+		recordPublicBenefitIPSpend(ctx, deps, p, usageLog, nil)
 		return true, nil
 	}
 
@@ -9897,6 +9897,10 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		usageLog.BillingType = BillingTypeSubscription
 	}
 
+	// 限时活动：钱包承担的部分被打折（含有卡、额度用尽后溢出到钱包的部分）时，usage_log 记实付口径：
+	// actual_cost = 卡部分（原价）+ 折后钱包部分，rate_multiplier 同比例折算；卡部分不打折、完全由卡覆盖时 PaidRatio=1，不动。
+	applyPromoWalletRateToUsageLog(usageLog, result)
+
 	// 透支改了 users.monthly_overdraft_count → 失效该用户全部 key 的鉴权快照，
 	// 让后续准入读到最新月度计数，避免用缓存里的旧（偏低）计数继续放行已满额用户。
 	if result.OverdraftApplied && p.User != nil {
@@ -9912,21 +9916,46 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	}
 
 	finalizePostUsageBilling(billingCtx, p, deps, result)
-	recordPublicBenefitIPSpend(billingCtx, deps, p, usageLog)
+	recordPublicBenefitIPSpend(billingCtx, deps, p, usageLog, result)
 	return true, nil
+}
+
+// paidActualCost 返回本次请求的「实付」金额：限时活动打折后（0<PaidRatio<1）为 actualCost×PaidRatio，
+// 否则原样返回（无折扣 / 无结算结果）。混合行（部分走卡、部分溢出钱包）也按该比例折算。
+func paidActualCost(actualCost float64, result *UsageBillingApplyResult) float64 {
+	if result == nil {
+		return actualCost
+	}
+	if r := result.PaidRatio; r > 0 && r < 1 {
+		return actualCost * r
+	}
+	return actualCost
+}
+
+// applyPromoWalletRateToUsageLog 把限时活动的钱包折扣同步进 usage_log（见 applyUsageBilling 的调用处注释）。
+func applyPromoWalletRateToUsageLog(usageLog *UsageLog, result *UsageBillingApplyResult) {
+	if usageLog == nil || result == nil {
+		return
+	}
+	// 实付口径：actual_cost = 卡部分 + 折后钱包部分；rate_multiplier 同比例折算，保持
+	// actual_cost = total_cost × rate_multiplier 的不变式（混合行记「混合有效倍率」，纯钱包行即折后倍率）。
+	if r := result.PaidRatio; r > 0 && r < 1 {
+		usageLog.RateMultiplier *= r
+		usageLog.ActualCost *= r
+	}
 }
 
 // recordPublicBenefitIPSpend 计费成功后，累加公益 key（hvoy/hovy）请求在该 IP 当日的消费。
 // 两个网关（Anthropic recordUsageCore / OpenAI RecordUsage）都经 applyUsageBilling，故此处单点覆盖。
 // 非公益 key / 无 IP / 无成本 时内部直接跳过；best-effort，不影响主计费。
-func recordPublicBenefitIPSpend(ctx context.Context, deps *billingDeps, p *postUsageBillingParams, usageLog *UsageLog) {
+func recordPublicBenefitIPSpend(ctx context.Context, deps *billingDeps, p *postUsageBillingParams, usageLog *UsageLog, result *UsageBillingApplyResult) {
 	if deps == nil || deps.billingCacheService == nil || p == nil || p.APIKey == nil || p.Cost == nil {
 		return
 	}
 	if usageLog == nil || usageLog.IPAddress == nil || *usageLog.IPAddress == "" {
 		return
 	}
-	deps.billingCacheService.AddPublicBenefitIPSpend(ctx, p.APIKey, *usageLog.IPAddress, p.Cost.ActualCost)
+	deps.billingCacheService.AddPublicBenefitIPSpend(ctx, p.APIKey, *usageLog.IPAddress, paidActualCost(p.Cost.ActualCost, result))
 }
 
 func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
@@ -9942,8 +9971,10 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		deps.billingCacheService.QueueDeductBalance(p.User.ID, walletDebit)
 	}
 
+	// 限时活动：Key 限速窗口 / user×platform 配额按「实付」口径累计（打折时为折后实付金额，含部分走卡的混合行；PaidRatio=1 时与原先一致）。
+	paidCost := paidActualCost(p.Cost.ActualCost, result)
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() {
-		deps.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(p.APIKey.ID, p.Cost.ActualCost)
+		deps.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(p.APIKey.ID, paidCost)
 	}
 
 	// burn-down「用完即失效」：本次把额度扣到 0 的订阅卡已在扣费事务内即时标记 expired；
@@ -9965,11 +9996,11 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 	//   - flusher_enabled=true:不直写 DB,由 flusher 异步批量刷（markDirty 已在 IncrementUserPlatformQuotaUsage 内部完成）
 	if p.Platform != "" && p.Cost.ActualCost > 0 && p.User != nil && deps.userPlatformQuotaRepo != nil {
 		if deps.billingCacheService.HasUserPlatformQuotaLimit(ctx, p.User.ID, p.Platform) {
-			deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, p.Cost.ActualCost)
+			deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, paidCost)
 			if deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled {
 				// 降级路径:flusher 未启用时保留原有异步直写 DB
 				dbCtx, dbCancel := detachUpstreamContext(ctx)
-				userID, platform, cost := p.User.ID, p.Platform, p.Cost.ActualCost
+				userID, platform, cost := p.User.ID, p.Platform, paidCost
 				go func() {
 					defer func() {
 						if r := recover(); r != nil {

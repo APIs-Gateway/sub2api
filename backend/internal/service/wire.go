@@ -236,6 +236,16 @@ func ProvideSubscriptionExpiryService(userSubRepo UserSubscriptionRepository, se
 	return svc
 }
 
+// ProvidePromoSettingsRefresher 创建并启动限时活动（PROMO_*）配置的后台刷新器：启动时同步加载一次，
+// 之后每 30 秒刷新，读库失败保留旧值；热路径只读内存快照，不触库。Stop 随服务关闭调用。
+func ProvidePromoSettingsRefresher(settingRepo SettingRepository) *PromoSettingsRefresher {
+	svc := NewPromoSettingsRefresher(func(ctx context.Context, keys []string) (map[string]string, error) {
+		return settingRepo.GetMultiple(ctx, keys)
+	}, promoSettingsRefreshInterval)
+	svc.Start()
+	return svc
+}
+
 // ProvideTimingWheelService creates and starts TimingWheelService
 func ProvideTimingWheelService() (*TimingWheelService, error) {
 	svc, err := NewTimingWheelService()
@@ -704,6 +714,7 @@ var ProviderSet = wire.NewSet(
 	ProvideClaudeCodeVersionSyncService,
 	ProvideProxyExpiryService,
 	ProvideSubscriptionExpiryService,
+	ProvidePromoSettingsRefresher,
 	ProvideTimingWheelService,
 	ProvideDashboardAggregationService,
 	ProvideUsageCleanupService,

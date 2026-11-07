@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -276,14 +277,16 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 			item.GroupName = sub.Group.Name
 		}
 		// 三窗口限额挂卡、不挂 group（新模型）：summary 也按卡级限额返回，避免回旧 group 值/空值。
-		if sub.DailyLimitUSD != nil {
-			item.DailyLimitUSD = *sub.DailyLimitUSD
+		// 限时活动：展示与准入/结算同一份有效限额（无活动时即卡上原值）。
+		dailyLimit, weeklyLimit, monthlyLimit := service.PromoEffectiveLimitPtrs(sub.UserID, time.Now(), sub.DailyLimitUSD, sub.WeeklyLimitUSD, sub.MonthlyLimitUSD)
+		if dailyLimit != nil {
+			item.DailyLimitUSD = *dailyLimit
 		}
-		if sub.WeeklyLimitUSD != nil {
-			item.WeeklyLimitUSD = *sub.WeeklyLimitUSD
+		if weeklyLimit != nil {
+			item.WeeklyLimitUSD = *weeklyLimit
 		}
-		if sub.MonthlyLimitUSD != nil {
-			item.MonthlyLimitUSD = *sub.MonthlyLimitUSD
+		if monthlyLimit != nil {
+			item.MonthlyLimitUSD = *monthlyLimit
 		}
 
 		// Format expiration time

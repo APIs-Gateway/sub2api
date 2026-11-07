@@ -755,7 +755,7 @@ func UserSubscriptionFromService(sub *service.UserSubscription) *UserSubscriptio
 	if sub == nil {
 		return nil
 	}
-	out := userSubscriptionFromServiceBase(sub)
+	out := userSubscriptionFromServiceBase(sub, true)
 	return &out
 }
 
@@ -766,7 +766,7 @@ func UserSubscriptionFromServiceAdmin(sub *service.UserSubscription) *AdminUserS
 		return nil
 	}
 	return &AdminUserSubscription{
-		UserSubscription:  userSubscriptionFromServiceBase(sub),
+		UserSubscription:  userSubscriptionFromServiceBase(sub, false),
 		AssignedBy:        sub.AssignedBy,
 		AssignedAt:        sub.AssignedAt,
 		Notes:             sub.Notes,
@@ -779,7 +779,10 @@ func UserSubscriptionFromServiceAdmin(sub *service.UserSubscription) *AdminUserS
 	}
 }
 
-func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscription {
+// userSubscriptionFromServiceBase 把订阅卡转成 DTO。effective=true（用户端）时，生效中的卡按限时活动的
+// 有效限额展示（与准入/结算同一个 service.PromoEffectiveLimits，避免活动日显示「12/10」）；
+// effective=false（管理端）仍展示卡上存的原始限额。
+func userSubscriptionFromServiceBase(sub *service.UserSubscription, effective bool) UserSubscription {
 	now := time.Now()
 	calendarDay := 0
 	if sub.GrantedTotalUSD > 0 || sub.DailyAmountUSD > 0 {
@@ -816,6 +819,11 @@ func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscrip
 		}
 	}
 
+	dailyLimit, weeklyLimit, monthlyLimit := sub.DailyLimitUSD, sub.WeeklyLimitUSD, sub.MonthlyLimitUSD
+	if effective && sub.Status == service.SubscriptionStatusActive && now.Before(sub.ExpiresAt) {
+		dailyLimit, weeklyLimit, monthlyLimit = service.PromoEffectiveLimitPtrs(sub.UserID, now, dailyLimit, weeklyLimit, monthlyLimit)
+	}
+
 	return UserSubscription{
 		ID:                 sub.ID,
 		UserID:             sub.UserID,
@@ -829,9 +837,9 @@ func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscrip
 		DailyUsageUSD:      dailyUsageUSD,
 		WeeklyUsageUSD:     weeklyUsageUSD,
 		MonthlyUsageUSD:    monthlyUsageUSD,
-		DailyLimitUSD:      sub.DailyLimitUSD,
-		WeeklyLimitUSD:     sub.WeeklyLimitUSD,
-		MonthlyLimitUSD:    sub.MonthlyLimitUSD,
+		DailyLimitUSD:      dailyLimit,
+		WeeklyLimitUSD:     weeklyLimit,
+		MonthlyLimitUSD:    monthlyLimit,
 		GrantedTotalUSD:    sub.GrantedTotalUSD,
 		DailyAmountUSD:     sub.DailyAmountUSD,
 		ConsumedUSD:        sub.ConsumedUSD,

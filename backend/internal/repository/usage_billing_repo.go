@@ -152,9 +152,16 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		result.WalletDebit = &settleRes.walletDebit
 		result.OverdraftApplied = settleRes.overdraftApplied
 		result.SubscriptionID = settleRes.subscriptionID
+		result.PaidRatio = settleRes.paidRatio
 		if settleRes.expiredGroupID != nil {
 			result.DepletedSubscriptionGroupIDs = []int64{*settleRes.expiredGroupID}
 		}
+	}
+
+	// 限时活动：Key 额度 / 限速窗口按「实付」金额累计（含部分走卡、部分溢出钱包的混合行）；PaidRatio=1 时不变。
+	if r := result.PaidRatio; r > 0 && r < 1 {
+		cmd.APIKeyQuotaCost = service.QuantizeUsageBillingAmount(cmd.APIKeyQuotaCost * r)
+		cmd.APIKeyRateLimitCost = service.QuantizeUsageBillingAmount(cmd.APIKeyRateLimitCost * r)
 	}
 
 	// 已删除 Key 的额度/限速计数不再适用，但请求产生的消费仍需结算。
@@ -190,6 +197,7 @@ type subSettleResult struct {
 	expiredGroupID   *int64  // 本次把卡惰性标记为 expired 时其 group_id（供失效订阅缓存）；否则 nil
 	overdraftApplied bool    // 三窗口结算不自动透支，恒 false（保留字段兼容上层；透支走独立手动接口）
 	subscriptionID   *int64  // 本次结算所用的用户生效卡 ID（有生效卡即填）；供 usage_log 标 subscription 计费
+	paidRatio        float64 // 限时活动折后实付/折前总额（1=未打折）；供 usage_log 与 Key 额度计数同步记实付口径
 }
 
 // settleSubscriptionWindow 按三窗口瀑布把一笔请求的官方成本结算到「用户唯一生效卡 + 钱包」。
@@ -280,9 +288,20 @@ func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, off
 			Status:             status,
 		}
 	}
-	service.SettleWindow(card, &wallet, officialCost, multiplier, now)
+	// 限时活动：①有效限额放大（内存副本，不写回）；②钱包实际承担的部分（无论有没有生效卡）乘钱包折扣，
+	//   卡覆盖的部分按原价计入卡用量、不打折。
+	if card != nil {
+		card.ApplyPromo(userID, now)
+	}
+	// 与预占容量（billingInflightCapacity 的钱包 ÷f）必须使用同一个 PromoBalanceRateFactor，口径不能分叉。
+	walletRate := service.PromoBalanceRateFactor(userID, now)
+	settled := service.SettleWindowWithWalletRate(card, &wallet, officialCost, multiplier, walletRate, now)
+	paidRatio := 1.0
+	if raw := settled.SubCover + settled.WalletRaw; walletRate < 1 && raw > 0 && settled.WalletRaw > 0 {
+		paidRatio = (settled.SubCover + settled.WalletPay + settled.WalletNegPay) / raw
+	}
 
-	out := &subSettleResult{}
+	out := &subSettleResult{paidRatio: paidRatio}
 	// 计费识别 = 用户存在生效中的订阅卡。即使本次订阅覆盖为 0（撞窗口上限、全由钱包支付），
 	// 仍是「有生效卡」请求，应标 subscription。加载时 active 但 now≥expires_at 的假 active
 	// 会被 SettleWindow 置 JustExpired，不标 subscription。
