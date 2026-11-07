@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitor"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitordailyrollup"
+	"github.com/Wei-Shaw/sub2api/ent/channelmonitorgroupstats"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitorhistory"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitorrequesttemplate"
 	"github.com/Wei-Shaw/sub2api/ent/errorpassthroughrule"
@@ -621,6 +622,28 @@ func init() {
 	channelmonitordailyrollup.DefaultComputedAt = channelmonitordailyrollupDescComputedAt.Default.(func() time.Time)
 	// channelmonitordailyrollup.UpdateDefaultComputedAt holds the default value on update for the computed_at field.
 	channelmonitordailyrollup.UpdateDefaultComputedAt = channelmonitordailyrollupDescComputedAt.UpdateDefault.(func() time.Time)
+	channelmonitorgroupstatsFields := schema.ChannelMonitorGroupStats{}.Fields()
+	_ = channelmonitorgroupstatsFields
+	// channelmonitorgroupstatsDescBucketMinutes is the schema descriptor for bucket_minutes field.
+	channelmonitorgroupstatsDescBucketMinutes := channelmonitorgroupstatsFields[2].Descriptor()
+	// channelmonitorgroupstats.DefaultBucketMinutes holds the default value on creation for the bucket_minutes field.
+	channelmonitorgroupstats.DefaultBucketMinutes = channelmonitorgroupstatsDescBucketMinutes.Default.(int16)
+	// channelmonitorgroupstatsDescSuccessCount is the schema descriptor for success_count field.
+	channelmonitorgroupstatsDescSuccessCount := channelmonitorgroupstatsFields[3].Descriptor()
+	// channelmonitorgroupstats.DefaultSuccessCount holds the default value on creation for the success_count field.
+	channelmonitorgroupstats.DefaultSuccessCount = channelmonitorgroupstatsDescSuccessCount.Default.(int)
+	// channelmonitorgroupstatsDescError5xxCount is the schema descriptor for error_5xx_count field.
+	channelmonitorgroupstatsDescError5xxCount := channelmonitorgroupstatsFields[4].Descriptor()
+	// channelmonitorgroupstats.DefaultError5xxCount holds the default value on creation for the error_5xx_count field.
+	channelmonitorgroupstats.DefaultError5xxCount = channelmonitorgroupstatsDescError5xxCount.Default.(int)
+	// channelmonitorgroupstatsDescTotalCount is the schema descriptor for total_count field.
+	channelmonitorgroupstatsDescTotalCount := channelmonitorgroupstatsFields[5].Descriptor()
+	// channelmonitorgroupstats.DefaultTotalCount holds the default value on creation for the total_count field.
+	channelmonitorgroupstats.DefaultTotalCount = channelmonitorgroupstatsDescTotalCount.Default.(int)
+	// channelmonitorgroupstatsDescCreatedAt is the schema descriptor for created_at field.
+	channelmonitorgroupstatsDescCreatedAt := channelmonitorgroupstatsFields[7].Descriptor()
+	// channelmonitorgroupstats.DefaultCreatedAt holds the default value on creation for the created_at field.
+	channelmonitorgroupstats.DefaultCreatedAt = channelmonitorgroupstatsDescCreatedAt.Default.(func() time.Time)
 	channelmonitorhistoryFields := schema.ChannelMonitorHistory{}.Fields()
 	_ = channelmonitorhistoryFields
 	// channelmonitorhistoryDescModel is the schema descriptor for model field.

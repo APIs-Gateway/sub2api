@@ -317,6 +317,33 @@ func (_u *ChannelMonitorUpdate) SetNillableResponseFormat(v *string) *ChannelMon
 	return _u
 }
 
+// SetGroupID sets the "group_id" field.
+func (_u *ChannelMonitorUpdate) SetGroupID(v int64) *ChannelMonitorUpdate {
+	_u.mutation.ResetGroupID()
+	_u.mutation.SetGroupID(v)
+	return _u
+}
+
+// SetNillableGroupID sets the "group_id" field if the given value is not nil.
+func (_u *ChannelMonitorUpdate) SetNillableGroupID(v *int64) *ChannelMonitorUpdate {
+	if v != nil {
+		_u.SetGroupID(*v)
+	}
+	return _u
+}
+
+// AddGroupID adds value to the "group_id" field.
+func (_u *ChannelMonitorUpdate) AddGroupID(v int64) *ChannelMonitorUpdate {
+	_u.mutation.AddGroupID(v)
+	return _u
+}
+
+// ClearGroupID clears the value of the "group_id" field.
+func (_u *ChannelMonitorUpdate) ClearGroupID() *ChannelMonitorUpdate {
+	_u.mutation.ClearGroupID()
+	return _u
+}
+
 // AddHistoryIDs adds the "history" edge to the ChannelMonitorHistory entity by IDs.
 func (_u *ChannelMonitorUpdate) AddHistoryIDs(ids ...int64) *ChannelMonitorUpdate {
 	_u.mutation.AddHistoryIDs(ids...)
@@ -603,6 +630,15 @@ func (_u *ChannelMonitorUpdate) sqlSave(ctx context.Context) (_node int, err err
 	}
 	if value, ok := _u.mutation.ResponseFormat(); ok {
 		_spec.SetField(channelmonitor.FieldResponseFormat, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.GroupID(); ok {
+		_spec.SetField(channelmonitor.FieldGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedGroupID(); ok {
+		_spec.AddField(channelmonitor.FieldGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.GroupIDCleared() {
+		_spec.ClearField(channelmonitor.FieldGroupID, field.TypeInt64)
 	}
 	if _u.mutation.HistoryCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1028,6 +1064,33 @@ func (_u *ChannelMonitorUpdateOne) SetNillableResponseFormat(v *string) *Channel
 	return _u
 }
 
+// SetGroupID sets the "group_id" field.
+func (_u *ChannelMonitorUpdateOne) SetGroupID(v int64) *ChannelMonitorUpdateOne {
+	_u.mutation.ResetGroupID()
+	_u.mutation.SetGroupID(v)
+	return _u
+}
+
+// SetNillableGroupID sets the "group_id" field if the given value is not nil.
+func (_u *ChannelMonitorUpdateOne) SetNillableGroupID(v *int64) *ChannelMonitorUpdateOne {
+	if v != nil {
+		_u.SetGroupID(*v)
+	}
+	return _u
+}
+
+// AddGroupID adds value to the "group_id" field.
+func (_u *ChannelMonitorUpdateOne) AddGroupID(v int64) *ChannelMonitorUpdateOne {
+	_u.mutation.AddGroupID(v)
+	return _u
+}
+
+// ClearGroupID clears the value of the "group_id" field.
+func (_u *ChannelMonitorUpdateOne) ClearGroupID() *ChannelMonitorUpdateOne {
+	_u.mutation.ClearGroupID()
+	return _u
+}
+
 // AddHistoryIDs adds the "history" edge to the ChannelMonitorHistory entity by IDs.
 func (_u *ChannelMonitorUpdateOne) AddHistoryIDs(ids ...int64) *ChannelMonitorUpdateOne {
 	_u.mutation.AddHistoryIDs(ids...)
@@ -1344,6 +1407,15 @@ func (_u *ChannelMonitorUpdateOne) sqlSave(ctx context.Context) (_node *ChannelM
 	}
 	if value, ok := _u.mutation.ResponseFormat(); ok {
 		_spec.SetField(channelmonitor.FieldResponseFormat, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.GroupID(); ok {
+		_spec.SetField(channelmonitor.FieldGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedGroupID(); ok {
+		_spec.AddField(channelmonitor.FieldGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.GroupIDCleared() {
+		_spec.ClearField(channelmonitor.FieldGroupID, field.TypeInt64)
 	}
 	if _u.mutation.HistoryCleared() {
 		edge := &sqlgraph.EdgeSpec{

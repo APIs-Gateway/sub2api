@@ -55,6 +55,8 @@ const (
 	FieldBodyOverride = "body_override"
 	// FieldResponseFormat holds the string denoting the response_format field in the database.
 	FieldResponseFormat = "response_format"
+	// FieldGroupID holds the string denoting the group_id field in the database.
+	FieldGroupID = "group_id"
 	// EdgeHistory holds the string denoting the history edge name in mutations.
 	EdgeHistory = "history"
 	// EdgeDailyRollups holds the string denoting the daily_rollups edge name in mutations.
@@ -109,6 +111,7 @@ var Columns = []string{
 	FieldBodyOverrideMode,
 	FieldBodyOverride,
 	FieldResponseFormat,
+	FieldGroupID,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -281,6 +284,11 @@ func ByBodyOverrideMode(opts ...sql.OrderTermOption) OrderOption {
 // ByResponseFormat orders the results by the response_format field.
 func ByResponseFormat(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldResponseFormat, opts...).ToFunc()
+}
+
+// ByGroupID orders the results by the group_id field.
+func ByGroupID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldGroupID, opts...).ToFunc()
 }
 
 // ByHistoryCount orders the results by history count.
