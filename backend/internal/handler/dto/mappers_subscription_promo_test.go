@@ -18,8 +18,8 @@ func setDTOPromoForTest(t *testing.T, excluded string) {
 		service.SettingKeyPromoSubscriptionDailyMultiplier: "1.5",
 		service.SettingKeyPromoExcludedUserIDs:             excluded,
 	}
-	service.SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) { return vals, nil })
-	t.Cleanup(func() { service.SetPromoSettingsSource(nil) })
+	require.NoError(t, service.SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) { return vals, nil }))
+	t.Cleanup(func() { _ = service.SetPromoSettingsSource(nil) })
 }
 
 func promoTestSub(userID int64) *service.UserSubscription {
@@ -75,7 +75,7 @@ func TestUserSubscriptionFromService_PromoEffectiveLimits(t *testing.T) {
 }
 
 func TestUserSubscriptionFromService_NoPromoKeepsRawLimits(t *testing.T) {
-	service.SetPromoSettingsSource(nil)
+	_ = service.SetPromoSettingsSource(nil)
 	got := UserSubscriptionFromService(promoTestSub(1))
 	require.Equal(t, 10.0, *got.DailyLimitUSD)
 	require.Equal(t, 70.0, *got.WeeklyLimitUSD)

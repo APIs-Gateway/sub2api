@@ -29,7 +29,7 @@ func promoTestValues() map[string]string {
 
 func setPromoForTest(t *testing.T, values map[string]string) {
 	t.Helper()
-	SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
+	_ = SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
 		out := map[string]string{}
 		for _, k := range keys {
 			if v, ok := values[k]; ok {
@@ -38,7 +38,7 @@ func setPromoForTest(t *testing.T, values map[string]string) {
 		}
 		return out, nil
 	})
-	t.Cleanup(func() { SetPromoSettingsSource(nil) })
+	t.Cleanup(func() { _ = SetPromoSettingsSource(nil) })
 }
 
 func promoAt(day, hour int) time.Time {
@@ -176,7 +176,7 @@ func TestParsePromoSettings_Status(t *testing.T) {
 func TestPromo_RefreshInvalidKeepsPreviousValid(t *testing.T) {
 	var mu sync.Mutex
 	vals := promoTestValues()
-	SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
+	_ = SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		out := map[string]string{}
@@ -185,7 +185,7 @@ func TestPromo_RefreshInvalidKeepsPreviousValid(t *testing.T) {
 		}
 		return out, nil
 	})
-	t.Cleanup(func() { SetPromoSettingsSource(nil) })
+	t.Cleanup(func() { _ = SetPromoSettingsSource(nil) })
 	now := promoAt(9, 12)
 	set := func(m map[string]string) {
 		mu.Lock()
@@ -253,7 +253,7 @@ func TestPromoSettingsRefresher_StartupRetryUntilFirstSuccess(t *testing.T) {
 	}, time.Hour) // 正常间隔很长：能在测试时间内成功只可能是启动重试
 	r.retryInterval = 5 * time.Millisecond
 	r.Start()
-	t.Cleanup(func() { r.Stop(); SetPromoSettingsSource(nil) })
+	t.Cleanup(func() { r.Stop(); _ = SetPromoSettingsSource(nil) })
 	now := promoAt(9, 12)
 
 	require.Equal(t, int32(1), calls.Load(), "启动同步加载一次，失败")
@@ -276,7 +276,7 @@ func TestPromoBalanceRateFactor_WindowAndExcluded(t *testing.T) {
 }
 
 func TestPromoNoSourceIsOff(t *testing.T) {
-	SetPromoSettingsSource(nil)
+	_ = SetPromoSettingsSource(nil)
 	require.Equal(t, 1.0, promoDailyFactor(1, promoAt(9, 12)))
 	require.Equal(t, 1.0, PromoBalanceRateFactor(1, promoAt(9, 12)))
 }
@@ -482,11 +482,11 @@ func TestCheckUsageLimits_PromoScaling(t *testing.T) {
 // 热路径（PromoSubscriptionFactor 等）只读内存快照，任何次数的调用都不得再触发读库。
 func TestPromo_HotPathNeverLoads(t *testing.T) {
 	var calls atomic.Int32
-	SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
+	_ = SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
 		calls.Add(1)
 		return promoTestValues(), nil
 	})
-	t.Cleanup(func() { SetPromoSettingsSource(nil) })
+	t.Cleanup(func() { _ = SetPromoSettingsSource(nil) })
 	require.Equal(t, int32(1), calls.Load(), "启动期同步加载一次")
 
 	now := promoAt(9, 12)
@@ -502,7 +502,7 @@ func TestPromo_RefreshKeepsOldValueOnError(t *testing.T) {
 	var mu sync.Mutex
 	vals := promoTestValues()
 	var fail bool
-	SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
+	_ = SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if fail {
@@ -510,7 +510,7 @@ func TestPromo_RefreshKeepsOldValueOnError(t *testing.T) {
 		}
 		return vals, nil
 	})
-	t.Cleanup(func() { SetPromoSettingsSource(nil) })
+	t.Cleanup(func() { _ = SetPromoSettingsSource(nil) })
 	now := promoAt(9, 12)
 	require.Equal(t, 1.5, promoDailyFactor(1, now))
 
@@ -531,14 +531,14 @@ func TestPromo_RefreshKeepsOldValueOnError(t *testing.T) {
 }
 
 func TestPromo_StartupLoadFailureMeansOff(t *testing.T) {
-	SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
+	_ = SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
 		return nil, errors.New("db down")
 	})
-	t.Cleanup(func() { SetPromoSettingsSource(nil) })
+	t.Cleanup(func() { _ = SetPromoSettingsSource(nil) })
 	require.Equal(t, 1.0, promoDailyFactor(1, promoAt(9, 12)))
 	require.Equal(t, 1.0, PromoBalanceRateFactor(1, promoAt(9, 12)))
 	// 无读取源时刷新是空操作
-	SetPromoSettingsSource(nil)
+	_ = SetPromoSettingsSource(nil)
 	require.NoError(t, refreshPromoSettings())
 }
 
@@ -557,7 +557,7 @@ func TestPromoSettingsRefresher_BackgroundRefreshAndStop(t *testing.T) {
 		return out, nil
 	}, 10*time.Millisecond)
 	r.Start()
-	t.Cleanup(func() { r.Stop(); SetPromoSettingsSource(nil) })
+	t.Cleanup(func() { r.Stop(); _ = SetPromoSettingsSource(nil) })
 	now := promoAt(9, 12)
 	require.Equal(t, 1.0, promoDailyFactor(1, now), "启动时库里没有配置 = 关闭")
 

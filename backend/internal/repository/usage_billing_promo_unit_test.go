@@ -32,8 +32,8 @@ func setRepoPromoForTest(t *testing.T, excluded string) {
 		service.SettingKeyPromoBalanceRateMultiplier:       "0.52",
 		service.SettingKeyPromoExcludedUserIDs:             excluded,
 	}
-	service.SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) { return vals, nil })
-	t.Cleanup(func() { service.SetPromoSettingsSource(nil) })
+	require.NoError(t, service.SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) { return vals, nil }))
+	t.Cleanup(func() { _ = service.SetPromoSettingsSource(nil) })
 }
 
 var promoCardCols = []string{"id", "daily_limit_usd", "weekly_limit_usd", "monthly_limit_usd",
@@ -104,7 +104,7 @@ func TestSettle_Promo_ExcludedUserNoDiscount(t *testing.T) {
 
 func TestSettle_Promo_OutsideWindowNoDiscount(t *testing.T) {
 	setRepoPromoForTest(t, "")
-	service.SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
+	_ = service.SetPromoSettingsSource(func(ctx context.Context, keys []string) (map[string]string, error) {
 		return map[string]string{
 			service.SettingKeyPromoStartAt:               time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 			service.SettingKeyPromoEndAt:                 time.Now().Add(48 * time.Hour).Format(time.RFC3339),
@@ -220,7 +220,7 @@ func TestBillingInflightCapacity_PromoWalletPartScaledByInverseRate(t *testing.T
 }
 
 func TestBillingInflightCapacity_NoPromoUnchanged(t *testing.T) {
-	service.SetPromoSettingsSource(nil)
+	_ = service.SetPromoSettingsSource(nil)
 	require.InDelta(t, 50.0, capacityFor(t, 1, 50, nil), 1e-9)
 }
 
@@ -286,7 +286,7 @@ func TestApply_Promo_APIKeyCostsUseDiscountedPaidAmount(t *testing.T) {
 }
 
 func TestApply_NoPromo_APIKeyCostsUnchanged(t *testing.T) {
-	service.SetPromoSettingsSource(nil)
+	_ = service.SetPromoSettingsSource(nil)
 	res := applyWithKeyCosts(t, 1, nil, 10)
 	require.Equal(t, 1.0, res.PaidRatio)
 }
