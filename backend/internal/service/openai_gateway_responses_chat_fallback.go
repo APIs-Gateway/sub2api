@@ -56,10 +56,22 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	// custom_tool_call 项，先记下名字集合；tool_search 工具同理，回程还原为
 	// tool_search_call 项；namespace 子工具（如 MCP 工具）摊平转发，回程按映射还原
 	// 为带 namespace 字段的 function_call 项。
-	customTools := apicompat.CustomToolNames(responsesReq.Tools)
-	functionTools := apicompat.FunctionToolNames(responsesReq.Tools)
-	toolSearch := apicompat.HasToolSearchTool(responsesReq.Tools)
-	namespaceTools := apicompat.NamespaceToolNames(responsesReq.Tools)
+	// 新版 Codex 不发顶层 tools，而是把工具放在 input 的 additional_tools 项里，
+	// 回程还原表必须与请求转换用同一份有效工具列表，否则 ns__name 还原不了。
+	effectiveTools, err := apicompat.EffectiveResponsesTools(&responsesReq)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"type":    "invalid_request_error",
+				"message": err.Error(),
+			},
+		})
+		return nil, fmt.Errorf("resolve responses tools: %w", err)
+	}
+	customTools := apicompat.CustomToolNames(effectiveTools)
+	functionTools := apicompat.FunctionToolNames(effectiveTools)
+	toolSearch := apicompat.HasToolSearchTool(effectiveTools)
+	namespaceTools := apicompat.NamespaceToolNames(effectiveTools)
 
 	// 自愈回写：历史里带明文 summary 的 reasoning item 刷新进缓存，覆盖 Redis
 	// 被 flush / 跨实例漂移后同 id 的 encrypted-only 副本无法再取明文的情况。
@@ -81,7 +93,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	billingModel := resolveOpenAIForwardModel(account, originalModel, "")
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 	gpt61Err := validateGPT61SolCompatRequest(body, upstreamModel)
-	if gpt61Err == nil && openai.RequiresResponsesForToolCalls(upstreamModel) && len(responsesReq.Tools) > 0 {
+	if gpt61Err == nil && openai.RequiresResponsesForToolCalls(upstreamModel) && len(effectiveTools) > 0 {
 		gpt61Err = errResponsesRequiredForTools(upstreamModel)
 	}
 	if gpt61Err != nil {
