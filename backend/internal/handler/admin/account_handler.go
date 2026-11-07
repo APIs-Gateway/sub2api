@@ -679,6 +679,17 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
+	// 仅当请求带 credentials 时，更新前取一次账号快照（只留字符串，不持有指针），
+	// 用于更新后判断 base_url/api_key 是否真的变了。取不到则按「已变化」处理以保持旧行为。
+	var endpointBefore openAIEndpointSnapshot
+	endpointBeforeKnown := false
+	if len(req.Credentials) > 0 {
+		if before, getErr := h.adminService.GetAccount(c.Request.Context(), accountID); getErr == nil && before != nil {
+			endpointBefore = snapshotOpenAIEndpoint(before)
+			endpointBeforeKnown = true
+		}
+	}
+
 	account, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
 		Name:                  req.Name,
 		Notes:                 req.Notes,
@@ -712,10 +723,14 @@ func (h *AccountHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// OpenAI APIKey: credentials 修改后重新探测上游能力（base_url/api_key 可能变更）。
+	// OpenAI APIKey: 仅当 base_url/api_key 真的变化时才重新探测上游能力；
+	// 只改 model_mapping 等其他 credentials 字段不重探（探测模型可能与上游不匹配而误改能力标记）。
 	// 异步执行，探测失败不影响账号更新响应。
-	if len(req.Credentials) > 0 {
-		h.scheduleOpenAIResponsesProbe(account)
+	if len(req.Credentials) > 0 && account != nil {
+		after := snapshotOpenAIEndpoint(account)
+		if !endpointBeforeKnown || endpointChangedForProbe(endpointBefore, after) {
+			h.scheduleOpenAIResponsesProbe(account)
+		}
 	}
 
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
