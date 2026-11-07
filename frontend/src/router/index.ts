@@ -476,6 +476,30 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/pricing/snapshots',
+    name: 'AdminPricingSnapshots',
+    component: () => import('@/views/admin/pricing/SnapshotsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Price versions',
+      titleKey: 'admin.pricingOps.snapshots.title',
+      descriptionKey: 'admin.pricingOps.snapshots.description'
+    }
+  },
+  {
+    path: '/admin/pricing/stages',
+    name: 'AdminPricingStages',
+    component: () => import('@/views/admin/pricing/StagesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Group switch',
+      titleKey: 'admin.pricingOps.stages.title',
+      descriptionKey: 'admin.pricingOps.stages.description'
+    }
+  },
+  {
     path: '/admin/channels',
     redirect: '/admin/channels/pricing'
   },
