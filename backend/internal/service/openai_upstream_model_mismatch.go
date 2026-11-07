@@ -59,7 +59,7 @@ const upstreamModelMismatchMessage = "upstream returned a different model than r
 // （handler/concurrency_error_response.go 同款），不新造、不含内部名词。
 const UpstreamModelMismatchClientMessage = "Service temporarily unavailable, please retry later"
 
-var upstreamModelDateSuffixRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8})$`)
+var upstreamModelDateSuffixRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8}|(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01]))$`)
 
 // upstreamModelMatches 判断上游返回的 got 是否可视为与发送的 sent 一致。豁免规则依次为：
 //  1. 忽略大小写与首尾空白；任一为空放行。
@@ -104,6 +104,10 @@ func upstreamModelSegmentMatches(sent, got string) bool {
 		return true
 	}
 	if strings.HasPrefix(got, sent+"-") && upstreamModelDateSuffixRe.MatchString(strings.TrimPrefix(got, sent+"-")) {
+		return true
+	}
+	// 反方向：发的是带日期快照的名字，上游回基础名（deepseek-v4.1-flash-1017 → deepseek-v4.1-flash）。
+	if strings.HasPrefix(sent, got+"-") && upstreamModelDateSuffixRe.MatchString(strings.TrimPrefix(sent, got+"-")) {
 		return true
 	}
 	if base, ok := strings.CutSuffix(sent, "-latest"); ok && strings.HasPrefix(got, base) {
