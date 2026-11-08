@@ -1289,10 +1289,9 @@ func isOpenAIImagesAsyncFailedStatus(status string) bool {
 }
 
 func openAIImagesAsyncTaskFailedError(status string, header http.Header, body []byte) *OpenAIImagesUpstreamError {
-	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
-	if message == "" {
-		message = "Upstream image async task failed"
-	}
+	upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
+	// Upstream text stays internal (UpstreamMessage); the client message is fixed.
+	message := "Upstream image async task failed"
 	errType := strings.TrimSpace(gjson.GetBytes(body, "error.type").String())
 	if errType == "" {
 		errType = "upstream_error"
@@ -1310,6 +1309,7 @@ func openAIImagesAsyncTaskFailedError(status string, header http.Header, body []
 		ErrorType:         errType,
 		Code:              code,
 		Message:           message,
+		UpstreamMessage:   upstreamMessage,
 		UpstreamRequestID: requestID,
 	}
 }

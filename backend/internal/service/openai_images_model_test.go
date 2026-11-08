@@ -74,7 +74,9 @@ func TestOpenAIImagesRejectedDriverDoesNotCoolImageModel(t *testing.T) {
 				var upstreamErr *OpenAIImagesUpstreamError
 				require.ErrorAs(t, err, &upstreamErr)
 				require.Equal(t, 400, upstreamErr.StatusCode)
-				require.Contains(t, upstreamErr.Message, rejected)
+				// the upstream text is internal-only; the client message is fixed
+				require.Contains(t, upstreamErr.UpstreamMessage, rejected)
+				require.NotContains(t, upstreamErr.Message, rejected)
 				require.Empty(t, repo.modelRateLimitCalls)
 				require.Zero(t, repo.tempCalls)
 			} else {
@@ -150,7 +152,8 @@ func TestOpenAIImagesRejectedDriverPassthroughByAccountType(t *testing.T) {
 			if tc.passthrough {
 				require.ErrorAs(t, err, &upstreamErr)
 				require.Equal(t, http.StatusBadRequest, upstreamErr.StatusCode)
-				require.Contains(t, rec.Body.String(), "gpt-5.4-mini")
+				require.NotContains(t, rec.Body.String(), "gpt-5.4-mini", "upstream message must not reach the client")
+				require.Contains(t, upstreamErr.UpstreamMessage, "gpt-5.4-mini")
 				require.Empty(t, repo.modelRateLimitCalls)
 				require.Zero(t, repo.tempCalls)
 			} else {

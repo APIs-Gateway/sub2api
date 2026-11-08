@@ -6481,6 +6481,21 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	writeError compatErrorWriter,
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
+	return s.handleCompatErrorResponseWithOptions(resp, c, account, writeError, nil, requestedModel...)
+}
+
+// handleCompatErrorResponseWithOptions 是 handleCompatErrorResponse 的实现。
+// publicWriter 非 nil 时（Chat Completions、Anthropic Messages），不再把上游原文写给客户端，
+// 改用 UpstreamPublicErrorFor 的固定形态，由各格式自己的 publicWriter 写出；上游原文照旧只进 ops 错误日志。
+// 管理员显式配置的透传规则、账号自定义错误码这类「网关自己的决定」不受影响。
+func (s *OpenAIGatewayService) handleCompatErrorResponseWithOptions(
+	resp *http.Response,
+	c *gin.Context,
+	account *Account,
+	writeError compatErrorWriter,
+	publicWriter compatPublicErrorWriter,
+	requestedModel ...string,
+) (*OpenAIForwardResult, error) {
 	body, proofReadErr := s.readUpstreamErrorBodyComplete(resp)
 	markBillingInflightProviderRefusal(c, resp.StatusCode, body, proofReadErr)
 
@@ -6500,7 +6515,9 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		if clientMsg == "" {
 			clientMsg = "Request blocked by upstream cyber-security policy"
 		}
-		writeError(c, resp.StatusCode, "invalid_request_error", clientMsg)
+		if !writeCompatPublicUpstreamError(c, publicWriter, resp.StatusCode, body) {
+			writeError(c, resp.StatusCode, "invalid_request_error", clientMsg)
+		}
 		if cyberMsg == "" {
 			return nil, fmt.Errorf("openai cyber_policy: %d", resp.StatusCode)
 		}
@@ -6605,7 +6622,9 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		errType = "api_error"
 	}
 
-	writeError(c, resp.StatusCode, errType, upstreamMsg)
+	if !writeCompatPublicUpstreamError(c, publicWriter, resp.StatusCode, body) {
+		writeError(c, resp.StatusCode, errType, upstreamMsg)
+	}
 	return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 }
 

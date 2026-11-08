@@ -236,7 +236,7 @@ func TestForwardAlphaSearchPATBackfillsMissingChatGPTAccountMetadata(t *testing.
 	require.Equal(t, OpenAIAuthModePersonalAccessToken, account.Credentials["auth_mode"])
 }
 
-func TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError(t *testing.T) {
+func TestForwardAlphaSearchAPIKeyMapsModelAndSanitizesUpstreamError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	recorder := httptest.NewRecorder()
@@ -244,7 +244,7 @@ func TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/alpha/search", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
-	upstreamBody := `{"error":{"type":"invalid_request_error","message":"bad search"}}`
+	upstreamBody := `{"error":{"type":"invalid_request_error","message":"请求参数不正确 request_id: 2026110712abc"}}`
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusBadRequest,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -268,7 +268,9 @@ func TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
-	require.JSONEq(t, upstreamBody, recorder.Body.String())
+	require.JSONEq(t, `{"error":{"type":"invalid_request_error","message":"Invalid request parameters, please check the request body and try again"}}`, recorder.Body.String())
+	require.NotContains(t, recorder.Body.String(), "request_id")
+	require.NotContains(t, recorder.Body.String(), "请求参数")
 	require.Equal(t, "https://compat.example/v4/alpha/search", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer sk-test", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "upstream-5.6", gjson.GetBytes(upstream.lastBody, "model").String())
@@ -346,7 +348,7 @@ func TestForwardAlphaSearchAPIKeyUnsupportedEndpointFailsOverWithoutAccountError
 	}
 }
 
-func TestForwardAlphaSearchOAuthNotFoundPassesThrough(t *testing.T) {
+func TestForwardAlphaSearchOAuthNotFoundIsSanitized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	upstreamBody := `{"detail":"Not Found"}`
@@ -373,7 +375,8 @@ func TestForwardAlphaSearchOAuthNotFoundPassesThrough(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, http.StatusNotFound, recorder.Code)
-	require.JSONEq(t, upstreamBody, recorder.Body.String())
+	require.JSONEq(t, `{"error":{"type":"not_found_error","message":"Requested upstream resource was not found"}}`, recorder.Body.String())
+	require.NotContains(t, recorder.Body.String(), "Not Found\"")
 }
 
 func TestForwardAlphaSearchUnauthorizedDoesNotMarkAccountError(t *testing.T) {
@@ -717,9 +720,9 @@ func TestOpenAIAlphaSearchResponsesFallbackErrorPaths(t *testing.T) {
 		require.EqualError(t, err, "read alpha search responses fallback response: unexpected EOF")
 	})
 
-	t.Run("non_failover_error_passthrough", func(t *testing.T) {
+	t.Run("non_failover_error_is_sanitized", func(t *testing.T) {
 		c, recorder := newContext()
-		upstreamBody := `{"error":{"type":"invalid_request_error","message":"bad search"}}`
+		upstreamBody := `{"error":{"type":"invalid_request_error","message":"请求参数不正确 request_id: 2026110712abc"}}`
 		svc := &OpenAIGatewayService{
 			cfg: &config.Config{},
 			httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
@@ -730,7 +733,9 @@ func TestOpenAIAlphaSearchResponsesFallbackErrorPaths(t *testing.T) {
 		err := svc.forwardAlphaSearchViaResponsesWebSearch(context.Background(), c, account, body, "at-test-token", "", "gpt-5.6-sol", "gpt-5.6-sol")
 		require.NoError(t, err)
 		require.Equal(t, http.StatusBadRequest, recorder.Code)
-		require.JSONEq(t, upstreamBody, recorder.Body.String())
+		require.JSONEq(t, `{"error":{"type":"invalid_request_error","message":"Invalid request parameters, please check the request body and try again"}}`, recorder.Body.String())
+		require.NotContains(t, recorder.Body.String(), "request_id")
+		require.NotContains(t, recorder.Body.String(), "请求参数")
 	})
 
 	t.Run("failover_applies_non_401_side_effect_path", func(t *testing.T) {
