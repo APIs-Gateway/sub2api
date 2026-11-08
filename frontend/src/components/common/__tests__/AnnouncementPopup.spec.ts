@@ -63,6 +63,44 @@ describe('AnnouncementPopup', () => {
     wrapper.unmount()
   })
 
+  it('removes executable announcement attributes and URLs while preserving safe content', async () => {
+    const store = useAnnouncementStore()
+    store.currentPopup = {
+      id: 2,
+      title: 'Sanitized announcement',
+      content: [
+        '<p>Trusted <strong>formatting</strong></p>',
+        '<a id="safe-link" href="https://example.test/docs">Safe link</a>',
+        '<img id="notice-image" src="/notice.png" onerror="window.__announcementXss=true">',
+        '<a id="blocked-link" href="javascript:window.__announcementXss=true" onclick="window.__announcementXss=true">Blocked link</a>',
+      ].join('\n'),
+      notify_mode: 'popup',
+      created_at: '2026-10-23T00:00:00Z',
+      updated_at: '2026-10-23T00:00:00Z',
+    }
+
+    const wrapper = mount(AnnouncementPopup)
+    try {
+      await wrapper.vm.$nextTick()
+      const content = document.body.querySelector('.markdown-body')
+      expect(content).not.toBeNull()
+      expect(content?.querySelector('strong')?.textContent).toBe('formatting')
+      const safeLink = content?.querySelector('#safe-link')
+      expect(safeLink?.textContent).toBe('Safe link')
+      expect(safeLink?.getAttribute('href')).toBe('https://example.test/docs')
+      const image = content?.querySelector('#notice-image')
+      expect(image?.getAttribute('src')).toBe('/notice.png')
+      expect(image?.hasAttribute('onerror')).toBe(false)
+      const blockedLink = content?.querySelector('#blocked-link')
+      expect(blockedLink?.textContent).toBe('Blocked link')
+      expect(blockedLink?.hasAttribute('href')).toBe(false)
+      expect(blockedLink?.hasAttribute('onclick')).toBe(false)
+      expect(content?.querySelector('script, [onerror], [onclick]')).toBeNull()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it.each(['h2', 'h3', 'ul', 'li', 'blockquote', 'table', 'th', 'td', 'code'])(
     'loads a shared style rule for mixed-content <%s> elements',
     (element) => {

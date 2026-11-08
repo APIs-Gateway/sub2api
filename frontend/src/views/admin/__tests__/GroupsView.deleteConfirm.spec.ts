@@ -58,7 +58,7 @@ const group = (id: number, subscriptionType: 'standard' | 'subscription'): Admin
     rate_multiplier: 1,
     rpm_limit: 0,
     is_exclusive: subscriptionType === 'subscription',
-    status: 'active',
+    status: 'inactive',
     subscription_type: subscriptionType,
     daily_limit_usd: null,
     weekly_limit_usd: null,
@@ -142,6 +142,7 @@ describe('admin GroupsView delete confirmation', () => {
     const row = wrapper.get(`[data-row="${rowId}"]`)
     const deleteButton = row.findAll('button').find((button) => button.text() === 'common.delete')
     expect(deleteButton).toBeTruthy()
+    expect(deleteButton!.attributes('disabled')).toBeUndefined()
     await deleteButton!.trigger('click')
     await flushPromises()
     return wrapper

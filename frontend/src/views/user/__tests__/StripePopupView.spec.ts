@@ -1,5 +1,6 @@
+import { nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 
 const routeState = vi.hoisted(() => ({
   query: {} as Record<string, unknown>,
@@ -40,6 +41,10 @@ vi.mock('@stripe/stripe-js/pure', () => ({ loadStripe }))
 
 import StripePopupView from '../StripePopupView.vue'
 
+enableAutoUnmount(afterEach)
+
+let openerDescriptor: PropertyDescriptor | undefined
+
 async function initializeWechatPolling() {
   const wrapper = mount(StripePopupView)
   window.dispatchEvent(new MessageEvent('message', {
@@ -57,6 +62,7 @@ async function initializeWechatPolling() {
 describe('StripePopupView', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    openerDescriptor = Object.getOwnPropertyDescriptor(window, 'opener')
     routeState.query = {
       order_id: '42',
       method: 'wechat_pay',
@@ -72,6 +78,12 @@ describe('StripePopupView', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    if (openerDescriptor) {
+      Object.defineProperty(window, 'opener', openerDescriptor)
+    } else {
+      Reflect.deleteProperty(window, 'opener')
+    }
     vi.useRealTimers()
   })
 
@@ -140,10 +152,11 @@ describe('StripePopupView', () => {
     expect(closeWindow).not.toHaveBeenCalled()
   })
 
-  it('shows an initialization timeout when the opener never sends Stripe details', () => {
+  it('shows an initialization timeout when the opener never sends Stripe details', async () => {
     const wrapper = mount(StripePopupView)
 
     vi.advanceTimersByTime(15000)
+    await nextTick()
 
     expect(wrapper.text()).toContain('payment.stripePopup.timeout')
     wrapper.unmount()
@@ -173,7 +186,6 @@ describe('StripePopupView', () => {
 
     expect(postMessage).toHaveBeenCalledWith({ type: 'STRIPE_POPUP_READY' }, window.location.origin)
     wrapper.unmount()
-    Object.defineProperty(window, 'opener', { configurable: true, value: null })
   })
 
   it('keeps polling after a non-OK payment status response', async () => {
@@ -217,14 +229,13 @@ describe('StripePopupView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('payment.result.success')
-    vi.advanceTimersByTime(3000)
-    await flushPromises()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-
     vi.advanceTimersByTime(1999)
     expect(closeWindow).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1)
     expect(closeWindow).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(3000)
+    await flushPromises()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 })

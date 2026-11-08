@@ -1,0 +1,480 @@
+{
+  "status": "BOM expected-literal corrected source candidate pending independent review and remote formatting/behavior validation; both prior genuine baseline RED runs failed overall and remain preserved",
+  "baseHead": "c541f5a171fe85a053a6199e10304a386e852d22",
+  "baseTree": "09e841970f893e41c4a8e4a02c8059545a03f238",
+  "forkIssue": 1711,
+  "implementationPR": 1712,
+  "permanentTrackingIssue": 291,
+  "package": "github.com/imroc/req/v3",
+  "selector": "^TestReqClient(Digest|Redirect|Cookie|Response)_",
+  "newNamedLeafCount": 44,
+  "newNamedLeaves": [
+    "TestReqClientDigest_ReplayAndCache/md5_post",
+    "TestReqClientDigest_ReplayAndCache/sha256_auth_int",
+    "TestReqClientDigest_ReplayAndCache/bodyless_get",
+    "TestReqClientDigest_ReplayAndCache/stream_without_getbody",
+    "TestReqClientDigest_NonceRotation",
+    "TestReqClientDigest_NoChallengeEvictsCache",
+    "TestReqClientDigest_BoundedRejection",
+    "TestReqClientDigest_GetBodyFailure/clone_1",
+    "TestReqClientDigest_GetBodyFailure/clone_2",
+    "TestReqClientDigest_ConcurrentCachedNonce",
+    "TestReqClientDigest_ChallengeBoundary/basic_only",
+    "TestReqClientDigest_ChallengeBoundary/unsupported_digest",
+    "TestReqClientDigest_ChallengeBoundary/malformed_digest",
+    "TestReqClientRedirect_AllowedAuthorities/same_host",
+    "TestReqClientRedirect_AllowedAuthorities/same_domain",
+    "TestReqClientRedirect_AllowedAuthorities/allowed_host",
+    "TestReqClientRedirect_AllowedAuthorities/allowed_domain",
+    "TestReqClientRedirect_SensitiveHeaderBoundary",
+    "TestReqClientRedirect_ExplicitHeaderPolicy/copy_configured_only",
+    "TestReqClientRedirect_ExplicitHeaderPolicy/preserve_destination_value",
+    "TestReqClientCookie_RedirectReplacementAndDeletion",
+    "TestReqClientCookie_CloneAndClear/factory_isolates_clone_and_clear",
+    "TestReqClientCookie_CloneAndClear/caller_jar_shared_and_preserved",
+    "TestReqClientResponse_ManualDecoding/xml_by_content_type",
+    "TestReqClientResponse_ManualDecoding/explicit_xml",
+    "TestReqClientResponse_ManualDecoding/unknown_type_falls_back_json",
+    "TestReqClientResponse_ManualDecoding/invalid_xml",
+    "TestReqClientResponse_ManualDecoding/invalid_json",
+    "TestReqClientResponse_TruncatedBodyOwnership",
+    "TestReqClientResponse_TransformerFailure",
+    "TestReqClientResponse_AutomaticResultBoundaries/unknown_type_json",
+    "TestReqClientResponse_AutomaticResultBoundaries/invalid_json_no_success",
+    "TestReqClientResponse_AutomaticResultBoundaries/xml_error_result",
+    "TestReqClientResponse_AutomaticResultBoundaries/custom_error_204_has_no_body",
+    "TestReqClientResponse_CharsetShortBodies/windows1252_meta_buffer_64",
+    "TestReqClientResponse_CharsetShortBodies/windows1252_meta_buffer_512",
+    "TestReqClientResponse_CharsetShortBodies/windows1252_header_buffer_64",
+    "TestReqClientResponse_CharsetShortBodies/windows1252_header_buffer_512",
+    "TestReqClientResponse_CharsetShortBodies/utf16le_bom_buffer_64",
+    "TestReqClientResponse_CharsetShortBodies/utf16le_bom_buffer_512",
+    "TestReqClientResponse_CharsetShortBodies/unknown_meta_raw_buffer_64",
+    "TestReqClientResponse_CharsetShortBodies/unknown_meta_raw_buffer_512",
+    "TestReqClientResponse_CharsetShortBodies/no_detection_raw_buffer_64",
+    "TestReqClientResponse_CharsetShortBodies/no_detection_raw_buffer_512"
+  ],
+  "frozenRawFiles": [
+    {
+      "path": "client_behavior_peer_test.go",
+      "bytes": 5588,
+      "sha256": "0e6458474cec81c56a1fc29141811a02c7b256952d45c1118dd3c1934da9870b"
+    },
+    {
+      "path": "client_behavior_observer_test.go",
+      "bytes": 2961,
+      "sha256": "aaf8f968f7bb148200e50cb6351eb4b97b9d529f5ce9a6cef51ac3c96dc95626"
+    },
+    {
+      "path": "client_behavior_contract_test.go",
+      "bytes": 12996,
+      "sha256": "5a43df362be849aabbea3d3085f33d849a2bfa105a73005a3f38ea3d4a57ffcb"
+    },
+    {
+      "path": "client_redirect_cookie_contract_test.go",
+      "bytes": 10620,
+      "sha256": "2292e90a9c33cb97a774facdb05d97e05edf96ee555ac1e2b660437adc5c629c"
+    },
+    {
+      "path": "client_response_contract_test.go",
+      "bytes": 13319,
+      "sha256": "b0b3a1b425bff490475357b7e8fcf0b579e0a238eaebefaab4cb36a3201fc325"
+    },
+    {
+      "path": "CLIENT-BEHAVIOR-LICENSE",
+      "bytes": 2673,
+      "sha256": "0c1bf41cb4f1599676f758f3c99e680e4237e0dcffb95b04936d2a895f940b10"
+    }
+  ],
+  "originalPeerPreservation": {
+    "bytes": 5588,
+    "sha256": "0e6458474cec81c56a1fc29141811a02c7b256952d45c1118dd3c1934da9870b",
+    "preservedAt": "/tmp/sub2api-req-f-preserved-oct18/client_behavior_peer_test.go"
+  },
+  "officialSources": [
+    {
+      "officialURL": "https://github.com/golang/go/blob/2ae494ef9fb90e0da0073c31800ba38870249994/src/net/http/client_test.go",
+      "gitBlob": "d184f720319ce4fb9f4c9103564dcd577a1c9df9",
+      "bytes": 70170,
+      "sha256": "85221f694df95907c372a286cd47517de60628e2ae7722a4108a3b69dd3f4b08",
+      "behavioralAnchors": [
+        "TestClientCopyHeadersOnRedirect",
+        "TestClientStripHeadersOnRepeatedRedirect",
+        "TestClientAltersCookiesOnRedirect",
+        "TestRedirectCookiesJar"
+      ],
+      "originalManifestSHA256": "85221f694df95907c372a286cd47517de60628e2ae7722a4108a3b69dd3f4b08"
+    },
+    {
+      "officialURL": "https://github.com/golang/net/blob/18ece0ce30bc35fa81fe72028bf309bb3ff3f4a5/html/charset/charset_test.go",
+      "gitBlob": "c2f62445c7f070f58e99e4a99b0f80f28b4befaa",
+      "bytes": 8140,
+      "sha256": "136566151999f2ac43db0d32442b634860a7ed5926bb3c45056ab7f2c1f0fd2d",
+      "behavioralAnchors": [
+        "TestDecode",
+        "TestSniff",
+        "TestReader"
+      ],
+      "originalManifestSHA256": "136566151999f2ac43db0d32442b634860a7ed5926bb3c45056ab7f2c1f0fd2d"
+    },
+    {
+      "officialURL": "https://github.com/icholy/digest/blob/b1b6f62b9a55549e464151d0d5ab78f8cbe2bbf4/transport_test.go",
+      "gitBlob": "1ab9008efa2deb707f160f9ff25450b3c1ef1f61",
+      "bytes": 3913,
+      "sha256": "0b7b84cd8c2a2e5eb7bcca8dc1a36d855e735607dd4ef9cde7e0dd0cb84a7738",
+      "behavioralAnchors": [
+        "TestTransport",
+        "TestTransportNoChallenge"
+      ],
+      "originalManifestSHA256": "0b7b84cd8c2a2e5eb7bcca8dc1a36d855e735607dd4ef9cde7e0dd0cb84a7738"
+    },
+    {
+      "officialURL": "https://github.com/icholy/digest/blob/b1b6f62b9a55549e464151d0d5ab78f8cbe2bbf4/digest_test.go",
+      "gitBlob": "35cf62d8b6596f3262d3490b7ae15576f90ec75e",
+      "bytes": 6269,
+      "sha256": "79f2f37a81e26ac09182de33f1d8bd0461363604ad417bc8a2f17dfbda840987",
+      "behavioralAnchors": [
+        "TestDigestMD5",
+        "TestDigestSHA256",
+        "TestDigestAuthInt"
+      ],
+      "originalManifestSHA256": "79f2f37a81e26ac09182de33f1d8bd0461363604ad417bc8a2f17dfbda840987"
+    },
+    {
+      "officialURL": "https://github.com/icholy/digest/blob/b1b6f62b9a55549e464151d0d5ab78f8cbe2bbf4/challenge_test.go",
+      "gitBlob": "6d36c5828ae24b8095c8bb3d11c5c238620eed2d",
+      "bytes": 1877,
+      "sha256": "8afe69be9c1abe1632c0e13aeb2ff5f4e50231c83c6b58dd9469ac24d31b34c3",
+      "behavioralAnchors": [
+        "TestFindChallenge_NotFound"
+      ],
+      "originalManifestSHA256": "8afe69be9c1abe1632c0e13aeb2ff5f4e50231c83c6b58dd9469ac24d31b34c3"
+    },
+    {
+      "officialURL": "https://github.com/icholy/digest/blob/b1b6f62b9a55549e464151d0d5ab78f8cbe2bbf4/LICENSE",
+      "gitBlob": "f77edc2626907b625dc9098e71c863614c232c8d",
+      "bytes": 1067,
+      "sha256": "7302bfd28f45cfefb8ebda1d36f7ba5c9c75b8d241b428084a2a9abd2a2c4e66",
+      "behavioralAnchors": [],
+      "originalManifestSHA256": "7302bfd28f45cfefb8ebda1d36f7ba5c9c75b8d241b428084a2a9abd2a2c4e66"
+    },
+    {
+      "officialURL": "https://github.com/golang/text/blob/fafe4a06967e06550e69ee42787d9902845d2a3f/encoding/htmlindex/map.go",
+      "gitBlob": "c61439045d0e3c35e339dd658edccea390f81dce",
+      "bytes": 4147,
+      "sha256": "8094e6c1a15cc74160ecd3ed326d38fdc55af9e7b1caef53f5370e31f1e94cd5",
+      "behavioralAnchors": [
+        "utf16le maps to UTF16(LittleEndian, IgnoreBOM)"
+      ],
+      "originalManifestSHA256": "8094e6c1a15cc74160ecd3ed326d38fdc55af9e7b1caef53f5370e31f1e94cd5"
+    },
+    {
+      "officialURL": "https://github.com/golang/text/blob/fafe4a06967e06550e69ee42787d9902845d2a3f/encoding/unicode/unicode.go",
+      "gitBlob": "ce28c906288bfb088ff5d418060f1d452289c802",
+      "bytes": 15091,
+      "sha256": "277d0a491016a630f27ee7d5ee6eae73abe6a431e0b3a3962e69e7dfd4f151ef",
+      "behavioralAnchors": [
+        "UTF16 IgnoreBOM retains U+FEFF in UTF8 output"
+      ],
+      "originalManifestSHA256": "277d0a491016a630f27ee7d5ee6eae73abe6a431e0b3a3962e69e7dfd4f151ef"
+    }
+  ],
+  "unchangedOriginalTestFiles": [
+    {
+      "path": "client_test.go",
+      "bytes": 21122,
+      "sha256": "3688bc3c1b9ee3410927eec79baca4f247efd5514ea7dad3057455d08f24f195",
+      "pinnedOriginalSHA256": "3688bc3c1b9ee3410927eec79baca4f247efd5514ea7dad3057455d08f24f195"
+    },
+    {
+      "path": "decode_test.go",
+      "bytes": 375,
+      "sha256": "59a27f9ac730766ba0163f90670e9d1715425ef7565dabda15c862fbe2ae538b",
+      "pinnedOriginalSHA256": "59a27f9ac730766ba0163f90670e9d1715425ef7565dabda15c862fbe2ae538b"
+    },
+    {
+      "path": "internal/altsvcutil/altsvcutil_test.go",
+      "bytes": 344,
+      "sha256": "3535b35bc270425690899127e3554f3c2f0e876e253c5cd897168d0c26869f62",
+      "pinnedOriginalSHA256": "3535b35bc270425690899127e3554f3c2f0e876e253c5cd897168d0c26869f62"
+    },
+    {
+      "path": "internal/ascii/print_test.go",
+      "bytes": 1796,
+      "sha256": "3ae0de98eaa5f0019349945fe560938f75b0aae108f80e42edfc7914e0458ca0",
+      "pinnedOriginalSHA256": "3ae0de98eaa5f0019349945fe560938f75b0aae108f80e42edfc7914e0458ca0"
+    },
+    {
+      "path": "internal/charsets/charsets_test.go",
+      "bytes": 1616,
+      "sha256": "db3082a9148a5ffebe8c36745c1a1cb57960d74c35a64913a9a8a75d6d7441ef",
+      "pinnedOriginalSHA256": "db3082a9148a5ffebe8c36745c1a1cb57960d74c35a64913a9a8a75d6d7441ef"
+    },
+    {
+      "path": "internal/chunked_test.go",
+      "bytes": 6773,
+      "sha256": "646c6406de0a6c7fb46df31e90aacec7c4ca1c829311a086f3d8dad5224b0e8a",
+      "pinnedOriginalSHA256": "646c6406de0a6c7fb46df31e90aacec7c4ca1c829311a086f3d8dad5224b0e8a"
+    },
+    {
+      "path": "internal/socks/dial_test.go",
+      "bytes": 9626,
+      "sha256": "f8c58c5bf1197a2d075c7501c992d3cfa2bd8401d44a125025b69a8fbe2e43d2",
+      "pinnedOriginalSHA256": "f8c58c5bf1197a2d075c7501c992d3cfa2bd8401d44a125025b69a8fbe2e43d2"
+    },
+    {
+      "path": "internal/socks/socks_test.go",
+      "bytes": 1765,
+      "sha256": "b43036d8357794a1cce21bd4b939d01e833ca5aad73028e98e3664fa1c3c2d86",
+      "pinnedOriginalSHA256": "b43036d8357794a1cce21bd4b939d01e833ca5aad73028e98e3664fa1c3c2d86"
+    },
+    {
+      "path": "internal/testdata/cert_test.go",
+      "bytes": 730,
+      "sha256": "a09641fcccbcb5daf5ebf122b8e0dfc04017c415ba46269dbe96d50a4d10dcf6",
+      "pinnedOriginalSHA256": "a09641fcccbcb5daf5ebf122b8e0dfc04017c415ba46269dbe96d50a4d10dcf6"
+    },
+    {
+      "path": "internal/testdata/testdata_suite_test.go",
+      "bytes": 192,
+      "sha256": "af5b934a653f06720707549d1e3df618330b220b40d77a94c84e4306a28b5787",
+      "pinnedOriginalSHA256": "af5b934a653f06720707549d1e3df618330b220b40d77a94c84e4306a28b5787"
+    },
+    {
+      "path": "logger_test.go",
+      "bytes": 769,
+      "sha256": "9c26a5ff89e11cc5c69f7051120845e30d6a64123fdf41f1c2791c12de9a09d1",
+      "pinnedOriginalSHA256": "9c26a5ff89e11cc5c69f7051120845e30d6a64123fdf41f1c2791c12de9a09d1"
+    },
+    {
+      "path": "req_test.go",
+      "bytes": 9800,
+      "sha256": "e7b062cd4e187d5e862a9239d06ae52d6e66123b8f7a27f951537f3d4bc41390",
+      "pinnedOriginalSHA256": "e7b062cd4e187d5e862a9239d06ae52d6e66123b8f7a27f951537f3d4bc41390"
+    },
+    {
+      "path": "request_test.go",
+      "bytes": 28340,
+      "sha256": "6e673154deec01ad15fb0980b00e47376c4e32aeae7ddaa394b98add9c218dd2",
+      "pinnedOriginalSHA256": "6e673154deec01ad15fb0980b00e47376c4e32aeae7ddaa394b98add9c218dd2"
+    },
+    {
+      "path": "retry_test.go",
+      "bytes": 5564,
+      "sha256": "f639622e41d1b8c154719f60fb5e1ded6b1b62c11f68e84b3d25e57f4e0f710d",
+      "pinnedOriginalSHA256": "f639622e41d1b8c154719f60fb5e1ded6b1b62c11f68e84b3d25e57f4e0f710d"
+    }
+  ],
+  "productionChanges": [],
+  "integrationRequirements": [
+    "Keep all current401 mandatory leaves and actual named/full/race test results",
+    "Keep original132 provenance,89 production files,11 existing production adaptations and29 existing owned files",
+    "Add reviewed F files to newOwnedFiles and raw/final source hash seals; retain original14 test files (6 root,8 internal) byteexact",
+    "Add exact F leaves to mandatory named/all evidence and remote-only formatting checks",
+    "Keep both85 coverage gates, oldRED, existing frontend checks and builds unchanged"
+  ],
+  "behavioralSubsetOnly": true,
+  "excludedOrDeferred": [
+    "No public endpoints, Go internal harness, private dependency substitute or getter-only assertions",
+    "No HTTP1 framing/pool/retry assertions: truncated Content-Length fixture only drives Response.ToBytes sticky error and closure",
+    "No duplicate GBK boundary tests already in meta_charset_contract_test.go",
+    "Request.SetDigestAuth deprecated path is deferred; common client digest is the supported path exercised",
+    "Go308/GetBody redirect variants deferred; request-body GetBody failures exercised through digest instead"
+  ],
+  "nextGate": "Root plus independent review of current literal-corrected source and normal proof merge retaining both failed controller heads; only then authorized remote gofmt-l all5 and strict5RED+39PASS with original401/source/MVS unchanged. No production edit or whitelist expansion.",
+  "preservedReqBaseline": {
+    "repository": "https://github.com/imroc/req",
+    "version": "v3.57.0",
+    "commit": "247aa96f489227c411c5ce35e557f8f3494709b2",
+    "behavioralAnchorFiles": {
+      "client_test.go": [
+        "TestRedirect",
+        "TestAutoDecode",
+        "TestSetResponseBodyTransformer",
+        "TestCloneCookieJar"
+      ],
+      "request_test.go": [
+        "TestCookie",
+        "TestSuccess",
+        "TestError",
+        "TestRequestDisableAutoReadResponse",
+        "TestRestoreResponseBody"
+      ]
+    },
+    "rootOriginalTestFileCount": 6,
+    "totalOriginalTestFileCount": 14
+  },
+  "reviewRevisions": {
+    "priorRawHead": "2fdf1e56f35125feec2fec15c57ced22a4e78c5c",
+    "changes": [
+      "Owned request sources signal Close completion; bounded context waits permit asynchronous transport closure",
+      "Factory observations are mutex protected; auth-int requires nonzero factory use and every observed resource closed, without exact call count",
+      "Owned ordinary/unsupported401 payload write length/error and actual Flush error plus request cardinality verified before distinct body-loss assertion marker",
+      "Charset first chunk intentionally coalesced with io.ReadFull; no transparent error-preservation claim",
+      "Original14 test manifest clarified as6 root+8 internal files including1 charset test"
+    ]
+  },
+  "preFormatterRawFiles": [
+    {
+      "path": "client_behavior_peer_test.go",
+      "bytes": 5588,
+      "sha256": "0e6458474cec81c56a1fc29141811a02c7b256952d45c1118dd3c1934da9870b"
+    },
+    {
+      "path": "client_behavior_observer_test.go",
+      "bytes": 2946,
+      "sha256": "2aef7a1074ea8e78afd148c44df719682249ffebb233933789e5016cd40c173c"
+    },
+    {
+      "path": "client_behavior_contract_test.go",
+      "bytes": 12797,
+      "sha256": "d76f434b0f1906e6777605c87b4195daaee6398b5b47bb49e92ebd88c71924bf"
+    },
+    {
+      "path": "client_redirect_cookie_contract_test.go",
+      "bytes": 10354,
+      "sha256": "d4a8b9815d862772d87689743224cd38bc9a80c9aae5ba4849804c69f641f3a6"
+    },
+    {
+      "path": "client_response_contract_test.go",
+      "bytes": 12808,
+      "sha256": "1b772b08e47e142613777b07f8f28de6e42e0b225a67ad36c3dea8128b3f07ed"
+    },
+    {
+      "path": "CLIENT-BEHAVIOR-LICENSE",
+      "bytes": 2673,
+      "sha256": "0c1bf41cb4f1599676f758f3c99e680e4237e0dcffb95b04936d2a895f940b10"
+    }
+  ],
+  "formatterHistory": {
+    "scope": "Historical remote gofmt only for prior formatted candidate0eaabfbe18250716fb6017ec0b068d47bf7484a2. remoteFormattedFilesAt0eaabf retains those exact output seals. Current frozenRawFiles includes a subsequent fixture correction not yet remotely formatted or behavior-validated; no old formatter pass is claimed for that changed file.",
+    "rawSourceHead": "c5fb66a3f58e3af00832fe9523e3697fdad0df97",
+    "rawSourceTree": "8671aef66f9a56a4f36b6227427a802a33a63a11",
+    "rawPayloadSHA256": "66dd0f7479ef686b19284ded5919d851cbb776c246a1d495abe777ae62586623",
+    "firstRun": {
+      "id": 39191156507,
+      "head": "664b5a53f1be00d354918b0b71eb1f1c585646be",
+      "actualConclusion": "failure",
+      "artifact": 12160201716,
+      "artifactSHA256": "62557497c6fff0d111b7bfacf70bfa89edeffdce2e98611f0c6f17e3caeea338",
+      "reason": "Controller wrongly rejected raw gofmt-d exit1 with actual formatting diff; no completion marker. Failure retained."
+    },
+    "correctedRun": {
+      "id": 39191408664,
+      "head": "4e0ab97faeb06c3d851be90b4569a49e28693935",
+      "tree": "ba6547cf6c7b3baa65110b5c7259f1b5f4133700",
+      "actualConclusion": "success",
+      "artifact": 12159319004,
+      "artifactSHA256": "e99b29b6801c491ee0af12d02fe62881d26c06070cf5883ca3a92d32fc15ae4b",
+      "allOriginalsByteexactRawGit": true,
+      "allWriteAfterDiffAfterListExit0AndEmpty": true,
+      "formattedOutputsByteexactFirstRun": true,
+      "rootIndependentReviewReceiptSHA256": "b4a717b3553d2aed0f80e2eff0b6d0aa077ccb314fba328c4be4e82608a56051"
+    }
+  },
+  "remoteFormattedFilesAt0eaabf": [
+    {
+      "path": "client_behavior_peer_test.go",
+      "bytes": 5588,
+      "sha256": "0e6458474cec81c56a1fc29141811a02c7b256952d45c1118dd3c1934da9870b"
+    },
+    {
+      "path": "client_behavior_observer_test.go",
+      "bytes": 2961,
+      "sha256": "aaf8f968f7bb148200e50cb6351eb4b97b9d529f5ce9a6cef51ac3c96dc95626"
+    },
+    {
+      "path": "client_behavior_contract_test.go",
+      "bytes": 12996,
+      "sha256": "5a43df362be849aabbea3d3085f33d849a2bfa105a73005a3f38ea3d4a57ffcb"
+    },
+    {
+      "path": "client_redirect_cookie_contract_test.go",
+      "bytes": 10620,
+      "sha256": "2292e90a9c33cb97a774facdb05d97e05edf96ee555ac1e2b660437adc5c629c"
+    },
+    {
+      "path": "client_response_contract_test.go",
+      "bytes": 13166,
+      "sha256": "d42a957027d2c5186a43f5bf6e1501d79cc81c7024544dbdc6a721c159d02e1a"
+    },
+    {
+      "path": "CLIENT-BEHAVIOR-LICENSE",
+      "bytes": 2673,
+      "sha256": "0c1bf41cb4f1599676f758f3c99e680e4237e0dcffb95b04936d2a895f940b10"
+    }
+  ],
+  "originalSourceHypotheses": [
+    "Digest ordinary401 body is drained/closed before FindChallenge returns ErrNoChallenge",
+    "Digest GetBody clone failure may leave original caller Body unclosed; test asserts documented RoundTripper ownership"
+  ],
+  "knownActualDefectWitnesses": {
+    "run": 39272637627,
+    "controllerHead": "baab0daafa389c60275fd769b8db6f7d2f96010f",
+    "applicationHead": "0eaabfbe18250716fb6017ec0b068d47bf7484a2",
+    "baselineHead": "c541f5a171fe85a053a6199e10304a386e852d22",
+    "actualConclusion": "failure",
+    "artifact": 12196251287,
+    "artifactSHA256": "32210334d732c0280cfa8a97d916a99e13cb16318408c507786ab6ecfdbcab48",
+    "actualNamedAndFullExits": 1,
+    "intendedDigestFailedLeaves": {
+      "TestReqClientDigest_NoChallengeEvictsCache": "REQ_DIGEST_401_BODY_ASSERT:",
+      "TestReqClientDigest_GetBodyFailure/clone_1": "REQ_DIGEST_BODY_CLOSE_ASSERT:",
+      "TestReqClientDigest_GetBodyFailure/clone_2": "REQ_DIGEST_BODY_CLOSE_ASSERT:",
+      "TestReqClientDigest_ChallengeBoundary/basic_only": "REQ_DIGEST_401_BODY_ASSERT:",
+      "TestReqClientDigest_ChallengeBoundary/unsupported_digest": "REQ_DIGEST_401_BODY_ASSERT:"
+    },
+    "additionalFixtureFailedLeaves": 8,
+    "F44ActualLeafCounts": {
+      "pass": 31,
+      "fail": 13
+    },
+    "original401PassedInBaselineAndCandidateFull": true,
+    "noCompleteMarker": true,
+    "rootIndependentActualReviewReceiptSHA256": "976a6ebd39d437856852561749d7705d7edb9e80722afe4bcb4f290f6456dda1",
+    "claimLimit": "Five genuine digest assertions observed after fixture prerequisites, representing two production defect families. Overall strict5RED+39PASS proof failed because8 charset fixture leaves rejected legal timer wrapper. No production repair, approval, merge or passing F44 suite is claimed."
+  },
+  "fixtureCorrectionAfterInitialRed": {
+    "priorCandidateHead": "0eaabfbe18250716fb6017ec0b068d47bf7484a2",
+    "file": "client_response_contract_test.go",
+    "scope": "Only CharsetShortBodies per-subcase5s context plus SetTimeout(0) and SetContext; preserve44 names, type assertion, actual decoder/first chunk/payload/EOF/close behavior. Other clients retain common5s timeout. No unwrap, reflection, timer-body mock or additional acceptedRED.",
+    "reason": "http.Client.Timeout legally wraps production body as *http.cancelTimerBody, so prior direct decoder type assertion failed before charset behavior was reached.",
+    "validationStatus": "Context/Timeout fixture revision e7338c was remotely formatted (empty gofmt-l) and executed in run39275235120; previous8 timer-wrapper failures disappeared, but overall strictRED proof still failed due2 UTF16LE expected-literal errors. This is historical evidence, not a pass for the subsequent literal correction."
+  },
+  "secondBaselineRedAttempt": {
+    "run": 39275235120,
+    "controllerHead": "bfdf919675f7833b0903ef961feaf8f5bc7274b3",
+    "applicationHead": "e7338c328e20028aaac120c81026e6acf03c217c",
+    "baselineHead": "c541f5a171fe85a053a6199e10304a386e852d22",
+    "actualConclusion": "failure",
+    "artifact": 12196593511,
+    "artifactBytes": 6360581,
+    "artifactSHA256": "2bb02654928f84a15a289d2823821396f347d0d2e6fad0b2c80005669ac558f9",
+    "actualNamedAndFullExits": 1,
+    "F44ActualLeafCounts": {
+      "pass": 37,
+      "fail": 7
+    },
+    "intendedDigestFailedLeafCount": 5,
+    "additionalBomExpectedLiteralFailedLeaves": [
+      "TestReqClientResponse_CharsetShortBodies/utf16le_bom_buffer_64",
+      "TestReqClientResponse_CharsetShortBodies/utf16le_bom_buffer_512"
+    ],
+    "actualBomFailure": "actual decoded bytes=U+FEFF plus Japanese text27bytes; prior expected literal omitted U+FEFF and was24bytes",
+    "original401PassedInBaselineAndCandidateFull": true,
+    "remoteGofmtListEmpty": true,
+    "noCompleteMarker": true,
+    "authorActualReviewReceiptSHA256": "fa18f6c34fdcd27baf48d8783de65543674ee2439ca5125005c4fab0ea76a4a6",
+    "authorOfficialBomAnalysisSHA256": "1e458ec5934757120c8ea5e2d4d493d3389022fa4665a4468c1ce6dc1452bc8e",
+    "claimLimit": "Overall FAILURE remains preserved. Two residual charset failures were invalid expected literals under the pinned decoder BOM policy, not evidence for stripping production output. No production repair, approval or merge is claimed."
+  },
+  "bomExpectedLiteralCorrection": {
+    "priorCandidateHead": "e7338c328e20028aaac120c81026e6acf03c217c",
+    "file": "client_response_contract_test.go",
+    "scope": "Only utf16le_bom expected literal gains explicit \\ufeff. Input bytes,44 leaf names, exact body/firstchunk/EOF/Close assertions, context5s and all other source remain unchanged. No actual output stripping, runtime expected decoder, whitelist expansion or production edit.",
+    "officialTextVersion": "v0.42.0",
+    "officialTextCommit": "fafe4a06967e06550e69ee42787d9902845d2a3f",
+    "officialPolicy": "htmlindex/map.go:103 uses unicode.UTF16(LittleEndian, IgnoreBOM); unicode.go:209-215 specifies UTF8 U+FEFF is retained. Pinned x/net TestReader:185-187 compares the direct Lookup decoder output without stripping.",
+    "validationStatus": "NOTRUN: current literal-corrected raw source pending independent review and remote gofmt/behavioral proof; prior formatting results do not cover this changed file."
+  }
+}

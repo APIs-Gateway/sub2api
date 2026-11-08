@@ -1,0 +1,49 @@
+{
+  "status": "METADATA-RECONCILED LOCK IMPORTED; runtime NOTRUN; exact-head remote frozen installation and execution remain required",
+  "existingPR": "https://github.com/APIs-Gateway/sub2api/pull/1712",
+  "permanentTrackingIssue": "https://github.com/APIs-Gateway/sub2api/issues/291",
+  "advisory": "GHSA-83rm-6c8r-g728",
+  "targetVersion": "11.4.14",
+  "requiredNodeMajor": 22,
+  "requiredFile": "src/i18n/__tests__/vueI18nSecurity.spec.ts",
+  "requiredCaseCount": 10,
+  "requiredPassedNames": [
+    "lazily renders 'zh-CN' literal and named values",
+    "lazily renders 'zh-HK' literal and named values",
+    "lazily renders 'en' literal and named values",
+    "renders the actual global and component composer after a locale switch",
+    "renders preferred messages and ordered nested fallback completion",
+    "migrates the stored zh preference and renders the selected Chinese locale",
+    "persists explicit locales and refreshes the real translated document title",
+    "compiles fresh runtime interpolation when dynamic Function construction is forbidden",
+    "neutralizes the active srcdoc attribute in 'literal' message HTML",
+    "neutralizes the active srcdoc attribute in 'named' message HTML"
+  ],
+  "requiredSuiteName": "Vue I18n security migration contracts",
+  "scope": "Actual vue-i18n alias/composer/application resources; store/router inputs only are isolated. No mocked translator, exploitability claim, exception or synthetic PASS. The isolated security composer enables escapeParameter without changing application configuration.",
+  "lockProvenance": {
+    "kind": "metadata-reconciled derivative of actual remote pnpm output; not raw artifact bytes",
+    "sourceHead": "88aac98317b0192b3e05204af009d89a3dc2bb3a",
+    "controllerHead": "320eac8be24770bb3600e444662c0ca98b926446",
+    "remoteRun": 40993653992,
+    "artifactID": 12950151961,
+    "artifactZIPBytes": 45886172,
+    "artifactZIPSHA256": "6b409923d9e260bd7cbeb4e354c89d9e24f0f93ca79f7ac17fd4b0bfe9734850",
+    "originalLockBytes": 334082,
+    "originalLockSHA256": "ee70bcdbe28e4ba9af148199e0829e5b0ff021fe66c3a74ad9629004a8d4caeb",
+    "rawGeneratedLockBytes": 334817,
+    "rawGeneratedLockSHA256": "965ca1c61173339d2e82fb6070f888e94735666adb5493d29229fe77eb1783c8",
+    "importedReconciledLockBytes": 334495,
+    "importedReconciledLockSHA256": "82ef5a10dccd9ba11d6c58b9d267bd7ff4da9b1f63a3467175f1ef35c317a72b",
+    "restoredOriginalMetadataBlocks": {
+      "rollupLibcSelectors": 11,
+      "unrelatedDeprecatedFields": 3,
+      "total": 14
+    },
+    "independentReconciliationReviewSHA256": "077fc474fc18871fd8455701f2533ace4e1e21125f3121c2bec691e35d76c80c",
+    "actualGenerationNode": "22.23.4",
+    "actualGenerationPnpm": "9.15.9",
+    "actualGenerationMode": "lockfile-only; ignore-scripts; no-frozen-lockfile; owned isolated store",
+    "runtimeAcceptance": "NOTRUN; remote frozen install with unchanged lock, actual named/full tests, typecheck, locale/key checks, build and unchanged security gate required"
+  }
+}

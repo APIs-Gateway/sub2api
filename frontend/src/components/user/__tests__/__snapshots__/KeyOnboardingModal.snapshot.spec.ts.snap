@@ -3753,7 +3753,7 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的
      <option value="">
       "Optional; leave blank to use the CC Switch default"
   <div class="mt-2 flex items-center gap-3" data-test="ccs-models-error">
-   <p class="input-hint flex-1 text-red-600 dark:text-red-400">
+   <p class="input-hint flex-1 text-red-600 dark:text-red-400" data-test="ccs-models-hint" id="onboarding-N-ccs-models-hint" role="status">
     "Could not load models. You can still import and leave the fields blank."
    <button class="btn btn-secondary btn-xs" data-test="ccs-models-retry" type="button">
     <svg aria-hidden="true" class="h-4 w-4" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
@@ -3780,7 +3780,7 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的
 ### 复制与链接
 (单一客户端): placeholder = Hiyo - Codex
   ccs-model = ""（禁用） 选项 = ["Optional; leave blank to use the CC Switch default"]
-  模型提示 = null
+  模型提示 = "Could not load models. You can still import and leave the fields blank."
   按钮禁用 = [false,false]
   复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
   打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}

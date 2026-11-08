@@ -1,10 +1,20 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import type { PaymentOrder } from '@/types/payment'
 import AdminRefundDialog from '../AdminRefundDialog.vue'
 
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+const getSettings = vi.hoisted(() => vi.fn())
+
+vi.mock('@/api/admin/settings', () => ({ settingsAPI: { getSettings } }))
+vi.mock('vue-i18n', async () => ({
+  ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
+  useI18n: () => ({ t: (key: string) => key }),
+}))
 enableAutoUnmount(afterEach)
+
+beforeEach(() => {
+  getSettings.mockReset().mockResolvedValue({ payment_refund_fee_rate: 0 })
+})
 
 async function openRefund(overrides: Partial<PaymentOrder> = {}) {
   const order: PaymentOrder = {
@@ -18,6 +28,8 @@ async function openRefund(overrides: Partial<PaymentOrder> = {}) {
     global: { stubs: { BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' } } }
   })
   await wrapper.setProps({ show: true })
+  await flushPromises()
+  expect(getSettings).toHaveBeenCalledTimes(1)
   return wrapper
 }
 

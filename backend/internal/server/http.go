@@ -133,14 +133,19 @@ func ProvideHTTPServer(cfg *config.Config, router *gin.Engine) *http.Server {
 	// 根据配置决定是否启用 H2C
 	if cfg.Server.H2C.Enabled {
 		h2cConfig := cfg.Server.H2C
-		if err := http2.ConfigureServer(server, &http2.Server{
+		// Go 1.26.9 HTTP2Config has no independent idle timeout. Replacing this
+		// adapter would change HTTP/1's 120s or HTTP/2's 75s default, and remove
+		// the existing unencrypted dispatch and graceful-shutdown registration.
+		// Primary: go1.26.9/src/net/http/http.go (HTTP2Config), x/net/v0.60.0/http2/server.go.
+		configureErr := http2.ConfigureServer(server, &http2.Server{ //nolint:staticcheck // SA1019: Native HTTP2Config cannot preserve the independent HTTP/2 idle timeout.
 			MaxConcurrentStreams:         h2cConfig.MaxConcurrentStreams,
 			IdleTimeout:                  time.Duration(h2cConfig.IdleTimeout) * time.Second,
 			MaxReadFrameSize:             uint32(h2cConfig.MaxReadFrameSize),
 			MaxUploadBufferPerConnection: int32(h2cConfig.MaxUploadBufferPerConnection),
 			MaxUploadBufferPerStream:     int32(h2cConfig.MaxUploadBufferPerStream),
-		}); err != nil {
-			log.Printf("Failed to configure HTTP/2 Cleartext (h2c): %v", err)
+		})
+		if configureErr != nil {
+			log.Printf("Failed to configure HTTP/2 Cleartext (h2c): %v", configureErr)
 		} else {
 			protocols := new(http.Protocols)
 			protocols.SetHTTP1(true)
