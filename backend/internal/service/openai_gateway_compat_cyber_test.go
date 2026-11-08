@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // compatCyberOAuthAccount 是 compat cyber 测试共用的 OAuth 账号。
@@ -69,6 +70,12 @@ func TestForwardAsChatCompletions_BufferedCyberPolicyNoFailover(t *testing.T) {
 	require.NotNil(t, mark, "cyber mark must be set for handler-side recording")
 	require.Equal(t, "cyber_policy", mark.Code)
 	require.True(t, c.Writer.Written(), "cyber error must be written to client (passthrough)")
+	// 上游原文（flagged for cyber policy）只进 mark / ops，不写给客户端：固定形态 + 保留 code。
+	require.NotContains(t, rec.Body.String(), "flagged for cyber policy")
+	require.Equal(t, "cyber_policy", gjson.Get(rec.Body.String(), "error.code").String(), rec.Body.String())
+	require.Equal(t, "upstream_error", gjson.Get(rec.Body.String(), "error.type").String(), rec.Body.String())
+	require.Equal(t, "Unknown error", gjson.Get(rec.Body.String(), "error.message").String(), rec.Body.String())
+	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 // I-1: chat completions 流式客户端 cyber 命中——result 必须被丢弃（返回 nil），
@@ -90,6 +97,11 @@ func TestForwardAsChatCompletions_StreamCyberPolicyDropsResult(t *testing.T) {
 	require.False(t, errors.As(err, &failoverErr), "cyber must NOT trigger failover")
 	require.NotNil(t, GetOpsCyberPolicy(c), "cyber mark must be set")
 	require.Contains(t, rec.Body.String(), "data: [DONE]", "stream must terminate with [DONE]")
+	// 流内 error 帧同样不带上游原文：固定形态 + 保留 code，程序化客户端据此停止重试。
+	require.NotContains(t, rec.Body.String(), "flagged for cyber policy")
+	require.Contains(t, rec.Body.String(), `"code":"cyber_policy"`)
+	require.Contains(t, rec.Body.String(), `"message":"Unknown error"`)
+	require.Contains(t, rec.Body.String(), `"type":"upstream_error"`)
 }
 
 // anthropic 非流式客户端（buffered 路径）cyber 命中——不 failover、标记已设、以 anthropic 错误格式回写、丢弃 result。

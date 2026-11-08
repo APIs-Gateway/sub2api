@@ -104,6 +104,11 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 	}
 
 	s.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, resp.Header)
+	if resp.StatusCode >= http.StatusBadRequest {
+		// Non-failover upstream error: do not relay the upstream body.
+		s.writeOpenAIPublicUpstreamHTTPError(c, account, resp, respBody, writeOpenAIAlphaSearchError)
+		return nil
+	}
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
@@ -176,6 +181,11 @@ func (s *OpenAIGatewayService) forwardAlphaSearchViaResponsesWebSearch(
 		}
 	}
 
+	if resp.StatusCode >= http.StatusBadRequest {
+		// Non-failover upstream error: do not relay the upstream body.
+		s.writeOpenAIPublicUpstreamHTTPError(c, account, resp, respBody, writeOpenAIAlphaSearchError)
+		return nil
+	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 		contentType := resp.Header.Get("Content-Type")
@@ -649,4 +659,13 @@ func (s *OpenAIGatewayService) openAIAlphaSearchURL(account *Account) (string, e
 	default:
 		return "", fmt.Errorf("unsupported OpenAI account type: %s", account.Type)
 	}
+}
+
+func writeOpenAIAlphaSearchError(c *gin.Context, statusCode int, errType, message string) {
+	c.JSON(statusCode, gin.H{
+		"error": gin.H{
+			"type":    errType,
+			"message": message,
+		},
+	})
 }

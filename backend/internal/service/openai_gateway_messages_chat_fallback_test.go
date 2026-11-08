@@ -781,7 +781,9 @@ func TestForwardAsAnthropic_ForceChatCompletionsNonFailover400UsesSharedErrorHan
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Equal(t, "error", gjson.Get(rec.Body.String(), "type").String())
 	require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
-	require.Equal(t, "invalid roles", gjson.Get(rec.Body.String(), "error.message").String())
+	// 上游原文（"invalid roles"）不写给客户端，换成固定文案；原文只留在下面的 ops 事件里。
+	require.Equal(t, "Invalid request parameters, please check the request body and try again", gjson.Get(rec.Body.String(), "error.message").String())
+	require.NotContains(t, rec.Body.String(), "invalid roles")
 
 	statusVal, ok := c.Get(OpsUpstreamStatusCodeKey)
 	require.True(t, ok)

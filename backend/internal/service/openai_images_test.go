@@ -1070,13 +1070,15 @@ func TestOpenAIGatewayServiceForwardImages_OAuthUpstreamHTTPErrorSurfacesRealErr
 	require.Equal(t, "invalid_request_error", upstreamErr.ErrorType)
 	require.Equal(t, "unknown_parameter", upstreamErr.Code)
 
-	// The client must receive the actual upstream status code and message instead
-	// of a generic 502 "Upstream request failed".
+	// The client must receive the actual upstream status code and error
+	// type/code/param, but never the upstream message text (kept for logs only).
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
 	require.Equal(t, "unknown_parameter", gjson.Get(rec.Body.String(), "error.code").String())
 	require.Equal(t, "size", gjson.Get(rec.Body.String(), "error.param").String())
-	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "Invalid value for 'size'")
+	require.Equal(t, "Invalid request parameters, please check the request body and try again", gjson.Get(rec.Body.String(), "error.message").String())
+	require.NotContains(t, rec.Body.String(), "Invalid value for 'size'")
+	require.Contains(t, upstreamErr.UpstreamMessage, "Invalid value for 'size'")
 }
 
 func TestOpenAIGatewayServiceForwardImages_OAuthNonStreamModerationBlockedReturnsClientError(t *testing.T) {
@@ -1795,7 +1797,8 @@ func TestOpenAIImagesAsyncBridgeHelpers(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, upErr.StatusCode)
 	require.Equal(t, "invalid_request_error", upErr.ErrorType)
 	require.Equal(t, "bad_model", upErr.Code)
-	require.Equal(t, "bad model", upErr.Message)
+	require.Equal(t, "Upstream image async task failed", upErr.Message)
+	require.Equal(t, "bad model", upErr.UpstreamMessage)
 	require.Equal(t, "rid", upErr.UpstreamRequestID)
 }
 
@@ -1908,7 +1911,7 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyAsyncBridgePollFailedStatus(t *
 	require.Error(t, err)
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Equal(t, "bad_model", gjson.Get(rec.Body.String(), "error.code").String())
-	require.Equal(t, "bad model", gjson.Get(rec.Body.String(), "error.message").String())
+	require.Equal(t, "Upstream image async task failed", gjson.Get(rec.Body.String(), "error.message").String())
 }
 
 func TestOpenAIGatewayServiceForwardImages_APIKeyAsyncBridgeAccessTokenError(t *testing.T) {

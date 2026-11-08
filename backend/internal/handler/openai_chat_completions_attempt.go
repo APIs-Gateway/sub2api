@@ -146,7 +146,7 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 				RequestScopedTransient: failoverErr.RequestScopedTransient || noGroupEvidence,
 			}
 		}, func() {
-			h.handleFailoverExhausted(c, failoverErr, stream())
+			h.handleChatFailoverExhausted(c, failoverErr, stream())
 		})
 	}
 	failoverExhausted := func(failoverErr *service.UpstreamFailoverError) service.HopResult {
@@ -416,7 +416,7 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 					if !openAIForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
 						// 真实内容已经写给客户端：不能换号也不能换组，原样收尾（outputCommitted）。
 						args.output.MarkContentStarted()
-						h.handleFailoverExhausted(c, failoverErr, true)
+						h.handleChatFailoverExhausted(c, failoverErr, true)
 						return terminal()
 					}
 					// 与 Responses 入口一致：只写过心跳或 SafeToFailoverAfterWrite 的 failover 已提交
@@ -559,4 +559,29 @@ func (h *OpenAIGatewayHandler) runChatChain(
 		// 实际服务的分组不是主分组：把它补记到安全审计事件上（设计 Q18）；没有配置记录器时是空操作。
 		h.recordSecurityAuditServedGroup(c, reqLog, hop.GroupID)
 	}
+}
+
+// handleChatFailoverExhausted 是 /v1/chat/completions 上「failover 用尽 / 不可换号的上游失败」的写出点：
+// 对外只给 UpstreamPublicErrorFor 的固定形态（状态码 1:1 跟随上游），上游原文只进 ops 错误日志。
+//
+// 以下几类按原路径写出，因为文案是网关自己的、对用户有用：图片余额不足、请求体过大（handleFailoverExhausted
+// 自己处理）、静默拒绝与上游模型不一致拦截（网关合成的 failover，带网关自己的固定文案）。
+// 该类错误按设计不覆盖（UpstreamPublicErrorFor 返回 HTTPStatus 0，如英文 context-window 提示）时同样沿用原路径。
+func (h *OpenAIGatewayHandler) handleChatFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	if failoverErr == nil ||
+		failoverErr.OpenAIImagesInsufficientBalance ||
+		service.IsOpenAIRequestBodyTooLargeFailover(failoverErr) ||
+		service.IsOpenAISilentRefusalErrorBody(failoverErr.ResponseBody) ||
+		service.IsUpstreamModelMismatchErrorBody(failoverErr.ResponseBody) {
+		h.handleFailoverExhausted(c, failoverErr, streamStarted)
+		return
+	}
+	pub := service.UpstreamPublicErrorFor(failoverErr.StatusCode, failoverErr.ResponseBody)
+	if pub.HTTPStatus <= 0 {
+		h.handleFailoverExhausted(c, failoverErr, streamStarted)
+		return
+	}
+	// 沿用共享策略记录真实上游状态码 / 消息（ops 与 A2 归因依赖它），响应内容以 pub 为准。
+	_, _, _ = service.ResolveUpstreamErrorResponse(c, service.PlatformOpenAI, failoverErr.StatusCode, failoverErr.ResponseBody)
+	h.handleStreamingAwareErrorWithCode(c, pub.HTTPStatus, pub.Type, pub.Code, pub.Message, streamStarted, false)
 }

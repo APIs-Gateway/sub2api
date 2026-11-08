@@ -16,6 +16,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/common"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"go.uber.org/zap"
 	"golang.org/x/net/http2"
 )
 
@@ -33,12 +35,38 @@ type CodexModelsManifest struct {
 	NotModified bool
 }
 
+// codexModelsUpstreamPublicMessage is the only text a client sees when the
+// Codex models manifest request to the upstream fails. The upstream status,
+// body, URL and transport error stay in logs/ops (see detail).
+const codexModelsUpstreamPublicMessage = "Upstream service temporarily unavailable"
+
 type codexModelsManifestUpstreamError struct {
 	err        error
 	retryable  bool
 	statusCode int
 	headers    http.Header
 	body       []byte
+	// detail is the original (internal-only) failure description, e.g. the
+	// upstream status and body. It must never be written to a client.
+	detail string
+}
+
+// CodexModelsManifestUpstreamInfo exposes the internal-only upstream status
+// and failure detail of a manifest fetch error so handlers can record them in
+// ops logs without putting them in the client response.
+func CodexModelsManifestUpstreamInfo(err error) (statusCode int, detail string, ok bool) {
+	var upstreamErr *codexModelsManifestUpstreamError
+	if !errors.As(err, &upstreamErr) || upstreamErr == nil {
+		return 0, "", false
+	}
+	return upstreamErr.statusCode, upstreamErr.detail, true
+}
+
+// newCodexModelsUpstreamFailedError builds the client-facing 502 for a failed
+// manifest request. The message is fixed; detail is kept as the error cause.
+func newCodexModelsUpstreamFailedError(detail string) *infraerrors.ApplicationError {
+	return infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", codexModelsUpstreamPublicMessage).
+		WithCause(errors.New(detail))
 }
 
 func (e *codexModelsManifestUpstreamError) Error() string { return e.err.Error() }
@@ -312,9 +340,15 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 		resp, err = client.Do(req)
 	}
 	if err != nil {
+		detail := fmt.Sprintf("codex models manifest request failed: %v", err)
+		logger.FromContext(reqCtx).Warn("codex models manifest request failed",
+			zap.Int64("account_id", account.ID),
+			zap.String("detail", detail),
+		)
 		return nil, &codexModelsManifestUpstreamError{
-			err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "codex models manifest request failed: %v", err),
+			err:       newCodexModelsUpstreamFailedError(detail),
 			retryable: isRetryableCodexModelsManifestTransportError(err),
+			detail:    detail,
 		}
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -335,8 +369,18 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 		if message == "" {
 			message = resp.Status
 		}
+		// The upstream status/body (often a relay's localized message with its
+		// own request id) must not reach the client: log it, expose a fixed
+		// message. The 502 itself is the gateway's own decision.
+		detail := fmt.Sprintf("codex models manifest upstream error %d: %s", resp.StatusCode, message)
+		logger.FromContext(reqCtx).Warn("codex models manifest upstream error",
+			zap.Int64("account_id", account.ID),
+			zap.Int("upstream_status", resp.StatusCode),
+			zap.String("upstream_body", message),
+		)
 		return nil, &codexModelsManifestUpstreamError{
-			err:        infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "codex models manifest upstream error %d: %s", resp.StatusCode, message),
+			err:        newCodexModelsUpstreamFailedError(detail),
+			detail:     detail,
 			statusCode: resp.StatusCode,
 			body:       body,
 			headers:    resp.Header.Clone(),
@@ -348,9 +392,15 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, codexModelsManifestBodyLimit))
 	if err != nil {
+		detail := fmt.Sprintf("read codex models manifest response: %v", err)
+		logger.FromContext(reqCtx).Warn("read codex models manifest response failed",
+			zap.Int64("account_id", account.ID),
+			zap.String("detail", detail),
+		)
 		return nil, &codexModelsManifestUpstreamError{
-			err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "read codex models manifest response: %v", err),
+			err:       newCodexModelsUpstreamFailedError(detail),
 			retryable: isRetryableCodexModelsManifestTransportError(err),
+			detail:    detail,
 		}
 	}
 	if projectAccount {

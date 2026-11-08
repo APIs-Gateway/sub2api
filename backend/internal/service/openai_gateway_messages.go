@@ -496,7 +496,7 @@ func (s *OpenAIGatewayService) handleAnthropicErrorResponse(
 	account *Account,
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
-	return s.handleCompatErrorResponse(resp, c, account, writeAnthropicError, requestedModel...)
+	return s.handleCompatErrorResponseWithOptions(resp, c, account, writeAnthropicError, writeAnthropicPublicError, requestedModel...)
 }
 
 // handleAnthropicBufferedStreamingResponse reads all Responses SSE events from
@@ -555,15 +555,17 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 			return nil, s.newOpenAIStreamFailoverError(c, account, false, requestID, payload, message, resp.Header)
 		}
 		message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payload, message)
+		// The upstream message (already recorded in ops by
+		// recordOpenAIStreamUpstreamError) must not reach the client.
 		if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, payload, message); matched {
 			if errMsg == "" {
-				errMsg = message
+				errMsg = openAIMessagesUpstreamFailedClientMessage
 			}
 			MarkResponseCommitted(c)
 			writeAnthropicError(c, status, errType, errMsg)
 			return nil, fmt.Errorf("upstream response failed (passthrough): %s", errMsg)
 		}
-		writeAnthropicError(c, http.StatusBadGateway, "api_error", message)
+		writeAnthropicError(c, http.StatusBadGateway, "api_error", openAIMessagesUpstreamFailedClientMessage)
 		return nil, fmt.Errorf("upstream response failed: %s", message)
 	}
 
@@ -1010,10 +1012,13 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 					return true
 				}
 				message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payloadBytes, message)
-				errStatus, errType, errMsg := http.StatusBadGateway, "api_error", message
+				// The upstream message is recorded in ops (recordOpenAIStreamUpstreamError)
+				// and kept in the returned error for logs; the client gets a fixed text.
+				errStatus, errType, errMsg := http.StatusBadGateway, "api_error", openAIMessagesUpstreamFailedClientMessage
+				logMsg := message
 				if openAIPoolAvailabilityErrorForAccount(account, payloadBytes) {
-					// 池可用性错误的上游原文含厂商 / 「商家」字样，不透给客户端（ops 已记原文）。
-					_, _, errMsg, _ = MapUpstreamErrorDefault(http.StatusBadGateway)
+					// pool availability upstream text may name the vendor; keep it out of the returned error too (ops has the original).
+					logMsg = openAIMessagesUpstreamFailedClientMessage
 				}
 				if status, et, em, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, payloadBytes, message); matched {
 					if em == "" {
@@ -1035,7 +1040,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 						}
 					}
 				}
-				streamNonFailoverErr = fmt.Errorf("upstream response failed: %s", errMsg)
+				streamNonFailoverErr = fmt.Errorf("upstream response failed: %s", logMsg)
 				return true
 			}
 		}
@@ -1340,6 +1345,10 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 }
 
 // writeAnthropicError writes an error response in Anthropic Messages API format.
+// openAIMessagesUpstreamFailedClientMessage is the client-facing text for an
+// upstream response.failed on the Anthropic-compatible /v1/messages path.
+const openAIMessagesUpstreamFailedClientMessage = "Upstream service temporarily unavailable"
+
 func writeAnthropicError(c *gin.Context, statusCode int, errType, message string) {
 	c.JSON(statusCode, gin.H{
 		"type": "error",

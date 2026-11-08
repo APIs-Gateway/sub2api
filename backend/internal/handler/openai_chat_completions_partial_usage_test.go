@@ -268,7 +268,12 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 				require.Contains(t, failingWriter.failedPayload, "not delivered", "failed write must carry the semantic text")
 			}
 			if tc.name == "raw chat error frame with usage" {
-				require.Contains(t, rec.Body.String(), "upstream stream interrupted")
+				// 上游 error 帧的原文（"upstream stream interrupted"）不能原样写给客户端：
+				// 换成固定形态，计费用的 usage 仍然取自上游原帧。
+				require.NotContains(t, rec.Body.String(), "upstream stream interrupted")
+				require.Contains(t, rec.Body.String(), `"message":"Unknown error"`)
+				require.Contains(t, rec.Body.String(), `"type":"upstream_error"`)
+				require.NotContains(t, rec.Body.String(), `"api_error"`)
 			}
 
 			if !tc.wantBilling {

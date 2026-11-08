@@ -184,8 +184,11 @@ func codexCanonicalHTTPResponse(upstreamStatus int, upstreamBody []byte) (int, [
 	switch status := codexCanonicalStatus(upstreamStatus); status {
 	case http.StatusBadRequest:
 		// Codex 对 400 的处理是原样打印整个响应体（api_bridge.rs InvalidRequest(body_text)），
-		// 协议上没有官方文案可用；本仓库 400 的文案本来就是固定英文，保持现状。
-		return 0, nil
+		// 协议上没有官方文案可用，所以用固定英文的 OpenAI 错误 envelope（UpstreamPublicErrorFor）。
+		// 以前这里返回「不覆盖」，调用方回落到自己的写出逻辑，而那些逻辑在 code 命中
+		// context_length_exceeded / context_too_large 时会把上游（可能是中文的）message 原样写给客户端，
+		// 连同上游 request_id。英文 context-window 提示与策略 code 在上面已经放行，不受影响。
+		return http.StatusBadRequest, UpstreamPublicErrorFor(upstreamStatus, upstreamBody).JSONBody()
 	case http.StatusServiceUnavailable:
 		return http.StatusServiceUnavailable, codexServerOverloadedBody()
 	default:

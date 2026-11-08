@@ -56,6 +56,7 @@ func (h *OpenAIGatewayHandler) codexModels(c *gin.Context, fetchManifest codexMo
 				return
 			}
 			if lastUpstreamErr != nil {
+				recordCodexModelsUpstreamOpsError(c, lastUpstreamErr)
 				h.errorResponse(c, infraerrors.Code(lastUpstreamErr), "upstream_error", infraerrors.Message(lastUpstreamErr))
 				return
 			}
@@ -76,6 +77,7 @@ func (h *OpenAIGatewayHandler) codexModels(c *gin.Context, fetchManifest codexMo
 				lastUpstreamErr = err
 				continue
 			}
+			recordCodexModelsUpstreamOpsError(c, err)
 			h.errorResponse(c, infraerrors.Code(err), "upstream_error", infraerrors.Message(err))
 			return
 		}
@@ -92,5 +94,13 @@ func (h *OpenAIGatewayHandler) codexModels(c *gin.Context, fetchManifest codexMo
 		}
 		c.Data(http.StatusOK, "application/json", manifest.Body)
 		return
+	}
+}
+
+// recordCodexModelsUpstreamOpsError keeps the upstream status and failure
+// detail (never sent to the client) in the ops error log.
+func recordCodexModelsUpstreamOpsError(c *gin.Context, err error) {
+	if statusCode, detail, ok := service.CodexModelsManifestUpstreamInfo(err); ok {
+		service.SetOpsUpstreamError(c, statusCode, "", detail)
 	}
 }
