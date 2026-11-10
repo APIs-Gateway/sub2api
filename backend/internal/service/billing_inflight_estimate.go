@@ -88,6 +88,11 @@ func applyInflightEstimate(ctx context.Context, repo UsageBillingRepository, cfg
 		amount = 0
 		exclusive = true
 	}
+	// 只有「有价」请求免锁；exclusive（无价模型、估价失败、非有限金额）必须照旧走 repo 预占，
+	// 它是无价模型的并发串行保护——无价按 0 元结算，不串行就能无限并发白嫖。
+	if !exclusive && skipInflightReservationForBalance(ctx, cfg, request.APIKey.User.Balance) {
+		return nil, nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if lease := BillingInflightLeaseFromContext(ctx); lease != nil {
@@ -250,4 +255,28 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 		}
 	}
 	return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, request, amount, false)
+}
+
+// skipInflightReservationForBalance 余额不低于 billing.inflight_reservation.lock_free_min_balance 时跳过预占：
+// 不建 lease、不碰 users 行锁（公共 key 集中在同一用户名下时，预占锁是全站串行点）。
+//
+// 安全性（均已核实，见 billing_inflight_lockfree_test.go）：
+//   - 余额取鉴权缓存快照（最长滞后约 L2 TTL+L1 TTL，默认约 6 分钟）。阈值须远大于单次请求费用与滞后窗口内的消耗。
+//   - 订阅卡日/周/月限额：AdmitWindow 在钱包余额 > 0 时恒放行，阈值为正，所以被跳过的预占里的限额准入本就不可能拒绝。
+//   - 余额不足、key 额度、用户停用等仍由鉴权中间件与 CheckBillingEligibility（读 Redis 余额，非快照）拦截。
+//   - 阈值与余额必须是有限数；阈值 <=0、NaN、±Inf，或余额 NaN、±Inf 一律不跳过；余额等于阈值时跳过。
+//   - 已有 lease（同一请求的重试 Resize）不跳过，保持原逻辑。
+//   - 本函数不看 exclusive：调用方 applyInflightEstimate 只对非 exclusive 请求调用它。
+func skipInflightReservationForBalance(ctx context.Context, cfg *config.Config, balance float64) bool {
+	if cfg == nil {
+		return false
+	}
+	threshold := cfg.Billing.InflightReservation.LockFreeMinBalance
+	if !(threshold > 0) || math.IsInf(threshold, 0) || math.IsNaN(balance) || math.IsInf(balance, 0) {
+		return false
+	}
+	if balance < threshold {
+		return false
+	}
+	return BillingInflightLeaseFromContext(ctx) == nil
 }

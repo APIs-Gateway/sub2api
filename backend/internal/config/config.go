@@ -793,6 +793,12 @@ type BillingInflightReservationConfig struct {
 	Enabled                bool `mapstructure:"enabled"`
 	TTLSeconds             int  `mapstructure:"ttl_seconds"`
 	DefaultMaxOutputTokens int  `mapstructure:"default_max_output_tokens"`
+	// LockFreeMinBalance 用户余额不低于该值时，「有价」请求跳过预占（不建 lease、不锁 users 行）；<=0、NaN、Inf 视为关闭。
+	// 无价模型的 exclusive 预占（并发串行保护）不受影响，仍照旧预占。
+	// 余额取自鉴权缓存快照（不查库）：直接改 SQL 把余额降到阈值以下后，最长约 5 分钟（L2 TTL 300s，抖动 +10%，再加 L1 约 15s）
+	// 才会让该用户重新进入预占；这段时间里「余额不足」仍由 Redis 余额检查（CheckBillingEligibility）兜底。
+	// 单位与余额一致（CREDIT_CURRENCY 切换币种时需同步调整）。
+	LockFreeMinBalance float64 `mapstructure:"lock_free_min_balance"`
 }
 
 type CircuitBreakerConfig struct {
@@ -1957,6 +1963,7 @@ func setDefaults() {
 	viper.SetDefault("billing.inflight_reservation.enabled", true)
 	viper.SetDefault("billing.inflight_reservation.ttl_seconds", 900)
 	viper.SetDefault("billing.inflight_reservation.default_max_output_tokens", 8192)
+	viper.SetDefault("billing.inflight_reservation.lock_free_min_balance", 0)
 	viper.SetDefault("billing.circuit_breaker.enabled", true)
 	viper.SetDefault("billing.circuit_breaker.failure_threshold", 5)
 	viper.SetDefault("billing.circuit_breaker.reset_timeout_seconds", 30)
