@@ -1883,6 +1883,35 @@
         </div>
       </div>
 
+      <div>
+        <div class="flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label class="input-label mb-0">{{
+              t('admin.accounts.noAutoUnsched')
+            }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.noAutoUnschedDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="no-auto-unsched-toggle"
+            @click="noAutoUnsched = !noAutoUnsched"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              noAutoUnsched ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                noAutoUnsched ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <div
         v-if="account?.platform === 'openai'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
@@ -2657,6 +2686,7 @@ const headerOverrideEnabled = ref(false)
 const headerOverrideRows = ref<HeaderOverrideRow[]>([])
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(false)
+const noAutoUnsched = ref(false) // extra.no_auto_unsched: never auto-pause / cool down on upstream failures
 const autoPause5hThreshold = ref<number | null>(null)
 const autoPause7dThreshold = ref<number | null>(null)
 const autoPause5hDisabled = ref(false)
@@ -3129,6 +3159,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	const extra = newAccount.extra as Record<string, unknown> | undefined
 	mixedScheduling.value = extra?.mixed_scheduling === true
 	allowOverages.value = extra?.allow_overages === true
+	noAutoUnsched.value = extra?.no_auto_unsched === true
 	autoPause5hThreshold.value = typeof extra?.auto_pause_5h_threshold === 'number' ? extra.auto_pause_5h_threshold * 100 : null
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
 	autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
@@ -4451,6 +4482,23 @@ const handleSubmit = async () => {
       }
       // Quota notify config
       writeQuotaNotifyToExtra(newExtra, 'update')
+      updatePayload.extra = newExtra
+    }
+
+    // no_auto_unsched toggle (all platforms); only touch extra when the value changed
+    const hadNoAutoUnsched =
+      (props.account.extra as Record<string, unknown> | undefined)?.no_auto_unsched === true
+    if (noAutoUnsched.value !== hadNoAutoUnsched) {
+      const currentExtra =
+        (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) ||
+        {}
+      const newExtra: Record<string, unknown> = { ...currentExtra }
+      if (noAutoUnsched.value) {
+        newExtra.no_auto_unsched = true
+      } else {
+        delete newExtra.no_auto_unsched
+      }
       updatePayload.extra = newExtra
     }
 

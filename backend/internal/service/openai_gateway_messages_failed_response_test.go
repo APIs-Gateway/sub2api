@@ -50,6 +50,8 @@ func TestForwardAsAnthropic_BufferedResponseFailed_ReturnsError(t *testing.T) {
 	require.Error(t, err, "non-cyber response.failed must return an error, not swallow as 200")
 	require.Contains(t, err.Error(), "upstream response failed")
 	require.Equal(t, http.StatusBadGateway, rec.Code, "should write 502 for non-failover failed response")
+	require.Contains(t, rec.Body.String(), "Upstream service temporarily unavailable")
+	require.NotContains(t, rec.Body.String(), "Content policy violation", "upstream message must not reach the client")
 
 	eventsVal, ok := c.Get(OpsUpstreamErrorsKey)
 	require.True(t, ok)
@@ -112,6 +114,9 @@ func TestForwardAsAnthropic_StreamingResponseFailed_ReturnsError(t *testing.T) {
 
 	require.Error(t, err, "streaming response.failed must return an error")
 	require.Contains(t, err.Error(), "upstream response failed")
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Contains(t, rec.Body.String(), "Upstream service temporarily unavailable")
+	require.NotContains(t, rec.Body.String(), "Content policy violation")
 }
 
 func TestForwardAsAnthropic_StreamingBareErrorAfterOutputIsVisible(t *testing.T) {
@@ -152,7 +157,9 @@ func TestForwardAsAnthropic_StreamingBareErrorAfterOutputIsVisible(t *testing.T)
 	clientStream := rec.Body.String()
 	require.Contains(t, clientStream, `"text":"partial"`)
 	require.Contains(t, clientStream, "event: error")
-	require.Contains(t, clientStream, "mixed tools failed")
+	// The upstream message stays in the returned error (logs) but must not reach the client.
+	require.Contains(t, clientStream, "Upstream service temporarily unavailable")
+	require.NotContains(t, clientStream, "mixed tools failed")
 	require.NotContains(t, clientStream, "event: message_stop")
 	require.NotContains(t, err.Error(), "missing terminal event")
 }

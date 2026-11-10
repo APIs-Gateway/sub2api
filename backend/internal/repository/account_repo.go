@@ -982,14 +982,23 @@ func (r *accountRepository) BatchUpdateLastUsed(ctx context.Context, updates map
 }
 
 func (r *accountRepository) SetError(ctx context.Context, id int64, errorMsg string) error {
-	_, err := r.client.Account.Update().
-		Where(dbaccount.IDEQ(id)).
+	update := r.client.Account.Update().Where(dbaccount.IDEQ(id))
+	exemptGate := !service.IsManualAccountState(ctx)
+	if exemptGate {
+		// 「不自动暂停调度」账号不因上游失败被自动置错；管理员手动置错走 WithManualAccountState 不受影响。
+		update = update.Where(notNoAutoUnschedPredicate())
+	}
+	affected, err := update.
 		SetStatus(service.StatusError).
 		SetErrorMessage(errorMsg).
 		SetSchedulable(false).
 		Save(ctx)
 	if err != nil {
 		return err
+	}
+	if exemptGate && affected == 0 {
+		logAutoPauseWriteSkipped(id, "set_error")
+		return nil
 	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue set error failed: account=%d err=%v", id, err)
@@ -1402,12 +1411,7 @@ func (r *accountRepository) ListSchedulableAccountLoads(ctx context.Context) ([]
 func (r *accountRepository) schedulableAccountsQuery(now time.Time) *dbent.AccountQuery {
 	return r.client.Account.Query().
 		Where(
-			dbaccount.StatusEQ(service.StatusActive),
-			dbaccount.SchedulableEQ(true),
-			tempUnschedulablePredicate(),
-			notExpiredPredicate(now),
-			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
-			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
+			schedulableStatePredicate(now),
 		).
 		Order(dbent.Asc(dbaccount.FieldPriority))
 }
@@ -1424,12 +1428,7 @@ func (r *accountRepository) ListSchedulableByPlatform(ctx context.Context, platf
 	accounts, err := r.client.Account.Query().
 		Where(
 			dbaccount.PlatformEQ(platform),
-			dbaccount.StatusEQ(service.StatusActive),
-			dbaccount.SchedulableEQ(true),
-			tempUnschedulablePredicate(),
-			notExpiredPredicate(now),
-			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
-			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
+			schedulableStatePredicate(now),
 		).
 		Order(dbent.Asc(dbaccount.FieldPriority)).
 		All(ctx)
@@ -1458,12 +1457,7 @@ func (r *accountRepository) ListSchedulableByPlatforms(ctx context.Context, plat
 	accounts, err := r.client.Account.Query().
 		Where(
 			dbaccount.PlatformIn(platforms...),
-			dbaccount.StatusEQ(service.StatusActive),
-			dbaccount.SchedulableEQ(true),
-			tempUnschedulablePredicate(),
-			notExpiredPredicate(now),
-			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
-			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
+			schedulableStatePredicate(now),
 		).
 		Order(dbent.Asc(dbaccount.FieldPriority)).
 		All(ctx)
@@ -1478,13 +1472,8 @@ func (r *accountRepository) ListSchedulableUngroupedByPlatform(ctx context.Conte
 	accounts, err := r.client.Account.Query().
 		Where(
 			dbaccount.PlatformEQ(platform),
-			dbaccount.StatusEQ(service.StatusActive),
-			dbaccount.SchedulableEQ(true),
 			dbaccount.Not(dbaccount.HasAccountGroups()),
-			tempUnschedulablePredicate(),
-			notExpiredPredicate(now),
-			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
-			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
+			schedulableStatePredicate(now),
 		).
 		Order(dbent.Asc(dbaccount.FieldPriority)).
 		All(ctx)
@@ -1502,13 +1491,8 @@ func (r *accountRepository) ListSchedulableUngroupedByPlatforms(ctx context.Cont
 	accounts, err := r.client.Account.Query().
 		Where(
 			dbaccount.PlatformIn(platforms...),
-			dbaccount.StatusEQ(service.StatusActive),
-			dbaccount.SchedulableEQ(true),
 			dbaccount.Not(dbaccount.HasAccountGroups()),
-			tempUnschedulablePredicate(),
-			notExpiredPredicate(now),
-			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
-			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
+			schedulableStatePredicate(now),
 		).
 		Order(dbent.Asc(dbaccount.FieldPriority)).
 		All(ctx)
@@ -1532,13 +1516,18 @@ func (r *accountRepository) ListSchedulableByGroupIDAndPlatforms(ctx context.Con
 
 func (r *accountRepository) SetRateLimited(ctx context.Context, id int64, resetAt time.Time) error {
 	now := time.Now()
-	_, err := r.client.Account.Update().
-		Where(dbaccount.IDEQ(id)).
+	// 「不自动暂停调度」账号不记录限流冷却（读侧 autoPauseWindowsClearPredicate / IsSchedulable 兜底旧数据）。
+	affected, err := r.client.Account.Update().
+		Where(dbaccount.IDEQ(id), notNoAutoUnschedPredicate()).
 		SetRateLimitedAt(now).
 		SetRateLimitResetAt(resetAt).
 		Save(ctx)
 	if err != nil {
 		return err
+	}
+	if affected == 0 {
+		logAutoPauseWriteSkipped(id, "set_rate_limited")
+		return nil
 	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue rate limit failed: account=%d err=%v", id, err)
@@ -1577,7 +1566,7 @@ func (r *accountRepository) SetModelRateLimit(ctx context.Context, id int64, sco
 				true
 			),
 			updated_at = NOW()
-		WHERE id = $3 AND deleted_at IS NULL`,
+		WHERE id = $3 AND deleted_at IS NULL AND NOT (`+noAutoUnschedRawSQL("")+`)`,
 		scope,
 		raw,
 		id,
@@ -1591,6 +1580,11 @@ func (r *accountRepository) SetModelRateLimit(ctx context.Context, id int64, sco
 		return err
 	}
 	if affected == 0 {
+		// 「不自动暂停调度」账号不记录单模型限流；账号不存在仍按原语义报错。
+		if r.accountIsNoAutoUnsched(ctx, id) {
+			logAutoPauseWriteSkipped(id, "set_model_rate_limit")
+			return nil
+		}
 		return service.ErrAccountNotFound
 	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
@@ -1600,13 +1594,29 @@ func (r *accountRepository) SetModelRateLimit(ctx context.Context, id int64, sco
 	return nil
 }
 
+// accountIsNoAutoUnsched reports whether the (non-deleted) account exists and is exempt from automatic pauses.
+func (r *accountRepository) accountIsNoAutoUnsched(ctx context.Context, id int64) bool {
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx,
+		`SELECT 1 FROM accounts WHERE id = $1 AND deleted_at IS NULL AND (`+noAutoUnschedRawSQL("")+`)`, id)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = rows.Close() }()
+	return rows.Next()
+}
+
 func (r *accountRepository) SetOverloaded(ctx context.Context, id int64, until time.Time) error {
-	_, err := r.client.Account.Update().
-		Where(dbaccount.IDEQ(id)).
+	affected, err := r.client.Account.Update().
+		Where(dbaccount.IDEQ(id), notNoAutoUnschedPredicate()).
 		SetOverloadUntil(until).
 		Save(ctx)
 	if err != nil {
 		return err
+	}
+	if affected == 0 {
+		logAutoPauseWriteSkipped(id, "set_overloaded")
+		return nil
 	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue overload failed: account=%d err=%v", id, err)
@@ -1624,6 +1634,7 @@ func (r *accountRepository) SetTempUnschedulable(ctx context.Context, id int64, 
 		WHERE id = $3
 			AND deleted_at IS NULL
 			AND (temp_unschedulable_until IS NULL OR temp_unschedulable_until < $1)
+			AND NOT (`+noAutoUnschedRawSQL("")+`)
 	`, until, reason, id)
 	if err != nil {
 		return err
@@ -2147,7 +2158,8 @@ func (r *accountRepository) queryAccountsByGroup(ctx context.Context, groupID in
 	// 通过 account_groups 中间表查询账号，并按需叠加状态/平台/调度能力过滤。
 	preds := make([]dbpredicate.Account, 0, 6)
 	preds = append(preds, dbaccount.DeletedAtIsNil())
-	if opts.status != "" {
+	// schedulable 查询的 status=active 过滤并入 schedulableStatePredicate（带标记账号不受 status 影响）。
+	if opts.status != "" && (!opts.schedulable || opts.status != service.StatusActive) {
 		preds = append(preds, dbaccount.StatusEQ(opts.status))
 	}
 	if len(opts.platforms) > 0 {
@@ -2155,13 +2167,7 @@ func (r *accountRepository) queryAccountsByGroup(ctx context.Context, groupID in
 	}
 	if opts.schedulable {
 		now := time.Now()
-		preds = append(preds,
-			dbaccount.SchedulableEQ(true),
-			tempUnschedulablePredicate(),
-			notExpiredPredicate(now),
-			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
-			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
-		)
+		preds = append(preds, schedulableStatePredicate(now))
 	}
 
 	if len(preds) > 0 {

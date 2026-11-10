@@ -301,6 +301,11 @@ func ProvideRateLimitService(
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
 ) *RateLimitService {
+	// 账号级可调度判断（Account.IsSchedulable、调度快照 SQL）拿不到 cfg，启动时把
+	// gateway.no_auto_unsched_account_ids 装进包级副本。必须早于第一次选号/快照重建。
+	if cfg != nil {
+		SetNoAutoUnschedConfigIDs(cfg.Gateway.NoAutoUnschedAccountIDs)
+	}
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	svc.SetTimeoutCounterCache(timeoutCounterCache)
 	svc.SetOpenAI403CounterCache(openAI403CounterCache)

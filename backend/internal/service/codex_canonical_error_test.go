@@ -76,10 +76,10 @@ func TestCodexCanonicalErrorFor_HTTPStatusMapping(t *testing.T) {
 }
 
 func TestCodexCanonicalErrorFor_HTTPNotOverridden(t *testing.T) {
-	t.Run("400 由 Codex 原样打印 body，协议上没有官方文案可用", func(t *testing.T) {
-		got := CodexCanonicalErrorFor(http.StatusBadRequest, nil)
+	t.Run("cyber_policy 是 Codex 原生 code，保持现状（400 也一样）", func(t *testing.T) {
+		got := CodexCanonicalErrorFor(http.StatusBadRequest, []byte(`{"error":{"code":"cyber_policy","message":"blocked"}}`))
 		require.Zero(t, got.HTTPStatus)
-		require.Nil(t, got.Body)
+		require.Empty(t, got.SSEErrCode)
 	})
 
 	t.Run("cyber_policy 是 Codex 原生 code，保持现状", func(t *testing.T) {
@@ -172,7 +172,19 @@ func TestCodexCanonicalResponsesError_OnlyAppliesToResponsesRoutes(t *testing.T)
 
 	t.Run("不覆盖的错误类型返回 nil", func(t *testing.T) {
 		c, _ := newResponsesTestContext(t, "/v1/responses")
-		require.Nil(t, CodexCanonicalResponsesError(c, http.StatusBadRequest, nil))
+		// cyber_policy 是 Codex 原生 code，不覆盖；400 本身已经会被覆盖成固定英文（见下方用例）。
+		require.Nil(t, CodexCanonicalResponsesError(c, http.StatusBadRequest, []byte(`{"error":{"code":"cyber_policy"}}`)))
+	})
+
+	t.Run("400 覆盖成固定英文，不透传上游原文", func(t *testing.T) {
+		c, _ := newResponsesTestContext(t, "/v1/responses")
+		body := []byte(`{"error":{"message":"请求参数不正确，请检查请求体后重试。 request_id: 202611071511107613041508268d9d6XnfZJg22","type":"invalid_request_error"}}`)
+		got := CodexCanonicalResponsesError(c, http.StatusBadRequest, body)
+		require.NotNil(t, got)
+		require.Equal(t, http.StatusBadRequest, got.HTTPStatus)
+		require.False(t, containsHan(string(got.Body)))
+		require.NotContains(t, string(got.Body), "request_id")
+		require.Equal(t, "Invalid request parameters, please check the request body and try again", gjson.GetBytes(got.Body, "error.message").String())
 	})
 }
 
@@ -318,4 +330,99 @@ func TestOpenAIHandleErrorResponse_ResponsesRouteReplacesUpstreamBody(t *testing
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	require.Equal(t, "Unknown error", gjson.Get(rec.Body.String(), "error.message").String())
 	require.False(t, containsHan(rec.Body.String()), "上游中文不能出现在对外响应里")
+}
+
+// 400：Codex 没有官方文案可用，但上游（可能是中文的）原文和 request_id 同样不能原样透给客户端。
+func TestCodexCanonicalErrorFor_HTTP400UsesFixedEnglishBody(t *testing.T) {
+	const invalidParams = "Invalid request parameters, please check the request body and try again"
+	const contextLimit = "Your input exceeds the context window of this model. Please adjust your input and try again."
+
+	cases := []struct {
+		name     string
+		body     string
+		wantBody string
+	}{
+		{"无响应体", ``, `{"error":{"message":"` + invalidParams + `","type":"invalid_request_error"}}`},
+		{
+			"上游中文参数错误",
+			`{"error":{"message":"请求参数不正确，请检查请求体后重试。 原因：xx request_id: 202611071511107613041508268d9d6XnfZJg22","type":"invalid_request_error"}}`,
+			`{"error":{"message":"` + invalidParams + `","type":"invalid_request_error"}}`,
+		},
+		{
+			"线上观测：code 命中 context_length_exceeded、message 是中文",
+			`{"error":{"message":"请求内容过大，当前模型或商家无法处理。 原因：本次上下文、附件或输出预算超过了可处理范围。 request_id: 202611071511107613041508268d9d6XnfZJg22","type":"invalid_request_error","code":"context_length_exceeded"}}`,
+			`{"error":{"message":"` + contextLimit + `","type":"invalid_request_error","code":"context_length_exceeded"}}`,
+		},
+		{
+			"model_not_found 保留结构化 code",
+			`{"error":{"message":"当前模型或商家不支持。 request_id: 20261107","type":"invalid_request_error","code":"model_not_found"}}`,
+			`{"error":{"message":"` + invalidParams + `","type":"invalid_request_error","code":"model_not_found"}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := CodexCanonicalErrorFor(http.StatusBadRequest, []byte(tc.body))
+			require.Equal(t, http.StatusBadRequest, got.HTTPStatus)
+			require.JSONEq(t, tc.wantBody, string(got.Body))
+			require.False(t, containsHan(string(got.Body)))
+			require.NotContains(t, string(got.Body), "request_id")
+		})
+	}
+
+	t.Run("英文 context-window 提示继续放行", func(t *testing.T) {
+		got := CodexCanonicalErrorFor(http.StatusBadRequest, []byte(`{"error":{"message":"This model's maximum context length is 8192 tokens.","type":"invalid_request_error"}}`))
+		require.Zero(t, got.HTTPStatus)
+		require.Nil(t, got.Body)
+	})
+}
+
+// 真实写出点：/responses 上游 400 的中文原文（连同 request_id）被固定英文替换。
+func TestOpenAIHandleErrorResponse_ResponsesRoute400ReplacesUpstreamBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name        string
+		body        string
+		wantMessage string
+		wantCode    string
+	}{
+		{
+			"code 命中 context_length_exceeded（以前这里把中文 message 原样写出）",
+			`{"error":{"message":"请求内容过大，当前模型或商家无法处理。 原因：本次上下文、附件或输出预算超过了可处理范围。 request_id: 202611071511107613041508268d9d6XnfZJg22","type":"invalid_request_error","code":"context_length_exceeded"}}`,
+			"Your input exceeds the context window of this model. Please adjust your input and try again.",
+			"context_length_exceeded",
+		},
+		{
+			"code 命中 context_too_large",
+			`{"error":{"message":"请求内容过大，当前模型或商家无法处理。 request_id: 202611071511107613041508268d9d6XnfZJg22","type":"invalid_request_error","code":"context_too_large"}}`,
+			"Invalid request parameters, please check the request body and try again",
+			"",
+		},
+		{
+			"普通中文 400",
+			`{"error":{"message":"请求参数不正确，请检查请求体后重试。 request_id: 202611071511107613041508268d9d6XnfZJg22","type":"invalid_request_error"}}`,
+			"Invalid request parameters, please check the request body and try again",
+			"",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			resp := &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     http.Header{},
+				Body:       io.NopCloser(bytes.NewReader([]byte(tc.body))),
+			}
+			account := &Account{ID: 14, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+			_, err := (&OpenAIGatewayService{}).handleErrorResponse(context.Background(), resp, c, account, nil)
+
+			require.Error(t, err)
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+			require.Equal(t, tc.wantMessage, gjson.Get(rec.Body.String(), "error.message").String())
+			require.Equal(t, tc.wantCode, gjson.Get(rec.Body.String(), "error.code").String())
+			require.False(t, containsHan(rec.Body.String()), "上游中文不能出现在对外响应里")
+			require.NotContains(t, rec.Body.String(), "request_id")
+		})
+	}
 }

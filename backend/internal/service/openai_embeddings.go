@@ -138,7 +138,10 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 				RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, respBody, !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)),
 			}, upstreamMsg, respBody)
 		}
-		writeOpenAIEmbeddingsUpstreamResponse(c, resp, respBody, s.responseHeaderFilter)
+		// Non-failover upstream error: never relay the upstream body (it may carry
+		// a relay's localized message and request id). Record it, answer with a
+		// fixed message and the upstream status mapped 1:1.
+		s.writeOpenAIPublicUpstreamHTTPError(c, account, resp, respBody, writeOpenAIEmbeddingsError)
 		return nil, fmt.Errorf("upstream returned status %d", resp.StatusCode)
 	}
 

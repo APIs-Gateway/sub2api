@@ -719,5 +719,30 @@ describe('BulkEditAccountModal', () => {
         auto_pause_on_expired: true
       })
     })
+
+    it('sends no_auto_unsched only when its checkbox is ticked and writes explicit false when off', async () => {
+      const wrapper = mountModal()
+      await wrapper.get('#bulk-edit-no-auto-unsched-toggle').trigger('click')
+      await wrapper.get('#bulk-edit-status-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], { status: 'active' })
+
+      await wrapper.get('#bulk-edit-no-auto-unsched-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], {
+        status: 'active',
+        extra: { no_auto_unsched: true }
+      })
+
+      await wrapper.get('#bulk-edit-no-auto-unsched-toggle').trigger('click')
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], {
+        status: 'active',
+        extra: { no_auto_unsched: false }
+      })
+    })
   })
 })

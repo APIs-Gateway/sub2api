@@ -74,6 +74,11 @@ func (s *AntigravityGatewayService) handleInternal500RetryExhausted(
 	if s.internal500Cache == nil {
 		return
 	}
+	// 「不自动暂停调度」账号：连续 INTERNAL 500 的渐进惩罚（临时不可调度 -> 永久禁用）一律不触发，也不累计计数。
+	if account.NoAutoUnsched() {
+		LogNoAutoUnschedSkip(account.ID, "internal500_penalty", prefix)
+		return
+	}
 	count, err := s.internal500Cache.IncrementInternal500Count(ctx, account.ID)
 	if err != nil {
 		slog.Error("internal500_counter_increment_failed",

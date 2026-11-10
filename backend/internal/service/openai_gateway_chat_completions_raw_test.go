@@ -687,6 +687,10 @@ func TestForwardAsRawChatCompletions_StreamErrorBeforeAndAfterContent(t *testing
 		multi    bool
 		content  bool
 		failover bool
+		// wantFrame 是非 failover 时写给客户端的 error 帧（固定形态，不含上游原文）；
+		// 为空表示按设计原样放行上游帧（英文 context-window 提示）。leak 是不允许出现在响应里的上游原文。
+		wantFrame string
+		leak      string
 	}{
 		{name: "bare overload", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, failover: true},
 		{name: "named overload", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, failover: true},
@@ -695,11 +699,15 @@ func TestForwardAsRawChatCompletions_StreamErrorBeforeAndAfterContent(t *testing
 		{name: "multiline named overload", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, failover: true},
 		{name: "multiline bare overload", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, failover: true},
 		{name: "response failed", event: "response.failed", payload: `{"type":"response.failed","response":{"error":{"code":"server_error","message":"try again later"}}}`, failover: true},
-		{name: "after content", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, content: true},
-		{name: "after content multiline with later usage", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, content: true},
-		{name: "invalid request", event: "error", payload: `{"error":{"type":"invalid_request_error","message":"invalid request"}}`},
+		{name: "after content", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, content: true,
+			wantFrame: `{"error":{"message":"Unknown error","type":"upstream_error"}}`, leak: "try again later"},
+		{name: "after content multiline with later usage", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, content: true,
+			wantFrame: `{"error":{"message":"Unknown error","type":"upstream_error"}}`, leak: "try again later"},
+		{name: "invalid request", event: "error", payload: `{"error":{"type":"invalid_request_error","message":"invalid request"}}`,
+			wantFrame: `{"error":{"message":"Invalid request parameters, please check the request body and try again","type":"invalid_request_error"}}`, leak: `"invalid request"`},
 		{name: "context window", payload: `{"error":{"code":"context_length_exceeded","message":"input exceeds the context window"}}`},
-		{name: "policy overrides capacity code", event: "error", payload: `{"error":{"type":"content_policy","code":"server_is_overloaded","message":"blocked by policy"}}`},
+		{name: "policy overrides capacity code", event: "error", payload: `{"error":{"type":"content_policy","code":"server_is_overloaded","message":"blocked by policy"}}`,
+			wantFrame: `{"error":{"message":"Upstream service temporarily unavailable","type":"upstream_error","code":"server_is_overloaded"}}`, leak: "blocked by policy"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"stream":true}`)
@@ -741,7 +749,13 @@ func TestForwardAsRawChatCompletions_StreamErrorBeforeAndAfterContent(t *testing
 				require.Empty(t, rec.Body.String())
 			} else {
 				require.NotNil(t, result)
-				require.Contains(t, rec.Body.String(), "data: "+tc.payload+"\n\n")
+				if tc.wantFrame == "" {
+					require.Contains(t, rec.Body.String(), "data: "+tc.payload+"\n\n")
+				} else {
+					require.Contains(t, rec.Body.String(), "data: "+tc.wantFrame+"\n\n")
+					require.NotContains(t, rec.Body.String(), tc.leak, "上游原文不能写给客户端")
+					require.NotContains(t, rec.Body.String(), "data: "+tc.payload)
+				}
 				require.NotContains(t, rec.Body.String(), "[DONE]")
 				if tc.name == "after content multiline with later usage" {
 					require.Equal(t, 7, result.Usage.InputTokens)

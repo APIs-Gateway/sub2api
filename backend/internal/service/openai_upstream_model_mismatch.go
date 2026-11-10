@@ -59,7 +59,7 @@ const upstreamModelMismatchMessage = "upstream returned a different model than r
 // （handler/concurrency_error_response.go 同款），不新造、不含内部名词。
 const UpstreamModelMismatchClientMessage = "Service temporarily unavailable, please retry later"
 
-var upstreamModelDateSuffixRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8})$`)
+var upstreamModelDateSuffixRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8}|(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01]))$`)
 
 // upstreamModelMatches 判断上游返回的 got 是否可视为与发送的 sent 一致。豁免规则依次为：
 //  1. 忽略大小写与首尾空白；任一为空放行。
@@ -72,9 +72,41 @@ var upstreamModelDateSuffixRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8})$`
 //  5. 同族 reasoning / 日期后缀剥离：任一方去掉已知后缀（codexVersionModelPrefixes + isKnownCodexModelSuffix）
 //     后等于另一方放行（gpt-5.4-high ↔ gpt-5.4）。不用任何 Contains 启发式。
 //  6. Codex 自动路由：sent（去 provider 前缀）在 upstreamAutoRoutedModels 里一律放行；got 是它不放行。
+//  7. 路由 / 区域前缀容忍：号池类上游按区域节点回显 "cn:glm-5.3-flash" 这种 "<前缀>:<模型>"。
+//     任一方形如 "<前缀>:<rest>"（前缀 upstreamModelRoutePrefixRe：不含 "/" 与 ":" 的 1–16 位短标识）
+//     时，只剥第一个、只剥一层 "<前缀>:"，再按 1–6 严格比对；剥完仍不同照拦
+//     （cn:grok-4.7 对 deepseek-v4.1-flash 仍是不一致）。不用任何 Contains 启发式。
 func upstreamModelMatches(sent, got string) bool {
 	sent = strings.ToLower(strings.TrimSpace(sent))
 	got = strings.ToLower(strings.TrimSpace(got))
+	if sent == "" || got == "" {
+		return true
+	}
+	if upstreamModelMatchesCore(sent, got) {
+		return true
+	}
+	strippedSent, sentCut := stripUpstreamModelRoutePrefix(sent)
+	strippedGot, gotCut := stripUpstreamModelRoutePrefix(got)
+	if !sentCut && !gotCut {
+		return false
+	}
+	return upstreamModelMatchesCore(strippedSent, strippedGot)
+}
+
+// upstreamModelRoutePrefixRe：路由 / 区域前缀的合法形态（入参已小写）。
+var upstreamModelRoutePrefixRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,15}$`)
+
+// stripUpstreamModelRoutePrefix 去掉第一个 "<前缀>:"（仅一层）；前缀不合法或剩余为空时原样返回 false。
+func stripUpstreamModelRoutePrefix(model string) (string, bool) {
+	prefix, rest, ok := strings.Cut(model, ":")
+	if !ok || rest == "" || !upstreamModelRoutePrefixRe.MatchString(prefix) {
+		return model, false
+	}
+	return rest, true
+}
+
+// upstreamModelMatchesCore 是规则 1–6，入参已小写去空白。
+func upstreamModelMatchesCore(sent, got string) bool {
 	if sent == "" || got == "" {
 		return true
 	}
@@ -104,6 +136,10 @@ func upstreamModelSegmentMatches(sent, got string) bool {
 		return true
 	}
 	if strings.HasPrefix(got, sent+"-") && upstreamModelDateSuffixRe.MatchString(strings.TrimPrefix(got, sent+"-")) {
+		return true
+	}
+	// 反方向：发的是带日期快照的名字，上游回基础名（deepseek-v4.1-flash-1017 → deepseek-v4.1-flash）。
+	if strings.HasPrefix(sent, got+"-") && upstreamModelDateSuffixRe.MatchString(strings.TrimPrefix(sent, got+"-")) {
 		return true
 	}
 	if base, ok := strings.CutSuffix(sent, "-latest"); ok && strings.HasPrefix(got, base) {

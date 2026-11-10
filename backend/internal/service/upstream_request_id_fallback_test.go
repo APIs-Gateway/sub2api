@@ -412,7 +412,8 @@ func TestOpenAIImagesUpstreamErrors_RequestIDFallbackHeaders(t *testing.T) {
 	require.Equal(t, "invalid_request_error", upErr.ErrorType)
 	require.Equal(t, "bad_model", upErr.Code)
 	require.Equal(t, "model", upErr.Param)
-	require.Equal(t, "bad model", upErr.Message)
+	require.Equal(t, "bad model", upErr.UpstreamMessage)
+	require.Equal(t, "Invalid request parameters, please check the request body and try again", upErr.Message)
 	require.Equal(t, "8a1b2c3d4e5f-HKG", upErr.UpstreamRequestID)
 
 	oneapi := http.Header{"X-Oneapi-Request-Id": []string{"one-1"}, "Cf-Ray": []string{"ray-1"}}

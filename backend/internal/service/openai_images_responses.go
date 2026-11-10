@@ -38,6 +38,11 @@ type OpenAIImagesUpstreamError struct {
 	Param             string
 	UpstreamRequestID string
 
+	// UpstreamMessage is the sanitized upstream error text. It is internal only:
+	// it appears in Error() (logs) but never in the client response, where
+	// Message (a fixed gateway-owned string) is used instead.
+	UpstreamMessage string
+
 	// SynthesizedFromModelText marks an error the gateway inferred from the
 	// model's plain-text output instead of reading it off a structured upstream
 	// error frame. Such a verdict describes this one turn ("the model answered
@@ -55,6 +60,9 @@ func (e *OpenAIImagesUpstreamError) Error() string {
 		code = strings.TrimSpace(e.ErrorType)
 	}
 	message := strings.TrimSpace(e.Message)
+	if upstreamMessage := strings.TrimSpace(e.UpstreamMessage); upstreamMessage != "" {
+		message = upstreamMessage
+	}
 	if code != "" && message != "" {
 		return fmt.Sprintf("openai images upstream error: %s: %s", code, message)
 	}
@@ -891,8 +899,12 @@ func openAIImagesUpstreamErrorFromHTTP(statusCode int, header http.Header, body 
 	errType := strings.TrimSpace(gjson.GetBytes(body, "error.type").String())
 	code := strings.TrimSpace(extractUpstreamErrorCode(body))
 	param := strings.TrimSpace(gjson.GetBytes(body, "error.param").String())
-	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
-	if message == "" {
+	upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
+	// The upstream text (often a relay's localized message with its own request
+	// id) stays internal; the client gets a fixed message for this status.
+	_, _, message, _ := MapUpstreamErrorDefault(statusCode)
+	if upstreamMessage == "" {
+		// Nothing upstream-originated to hide: keep the gateway's own placeholder.
 		message = fmt.Sprintf("Upstream request failed (status %d)", statusCode)
 	}
 	if errType == "" {
@@ -907,6 +919,7 @@ func openAIImagesUpstreamErrorFromHTTP(statusCode int, header http.Header, body 
 		ErrorType:         errType,
 		Code:              code,
 		Message:           message,
+		UpstreamMessage:   upstreamMessage,
 		Param:             param,
 		UpstreamRequestID: requestID,
 	}

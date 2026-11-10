@@ -149,22 +149,40 @@ func (a *Account) EffectiveLoadFactor() int {
 	return 1
 }
 
+// manualStateAllowsScheduling 判断人工可控的账号状态是否允许调度：status=active 且 schedulable=true。
+//
+// 唯一的例外是「不自动暂停调度」账号上的 status=error：该状态只由失败处理自动写入
+// （AccountRepository.SetError，同时把 schedulable 置 false；管理员手动停用用 status=disabled 或
+// 单独关 schedulable，且 status 保持 active），所以对带标记账号视为自动停调度而忽略，
+// 对 status=error 行里随之被置 false 的 schedulable 同样忽略。status=disabled、
+// status=active 下的 schedulable=false（人工停用）照常生效。
+func (a *Account) manualStateAllowsScheduling() bool {
+	if a.Status == StatusError && a.NoAutoUnsched() {
+		return true
+	}
+	return a.IsActive() && a.Schedulable
+}
+
 func (a *Account) IsSchedulable() bool {
-	if !a.IsActive() || !a.Schedulable {
+	if !a.manualStateAllowsScheduling() {
 		return false
 	}
 	now := time.Now()
 	if a.AutoPauseOnExpired && a.ExpiresAt != nil && !now.Before(*a.ExpiresAt) {
 		return false
 	}
-	if a.OverloadUntil != nil && now.Before(*a.OverloadUntil) {
-		return false
-	}
-	if a.RateLimitResetAt != nil && now.Before(*a.RateLimitResetAt) {
-		return false
-	}
-	if a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil) {
-		return false
+	// 「不自动暂停调度」账号忽略因上游失败自动产生的三类时间窗口（529 过载 / 429 限流 / 临时不可调度）。
+	// 字段仍然保留在账号上（后台可见），只是不再影响选号。
+	if !a.NoAutoUnsched() {
+		if a.OverloadUntil != nil && now.Before(*a.OverloadUntil) {
+			return false
+		}
+		if a.RateLimitResetAt != nil && now.Before(*a.RateLimitResetAt) {
+			return false
+		}
+		if a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil) {
+			return false
+		}
 	}
 	if a.IsAPIKeyOrBedrock() && a.IsQuotaExceeded() {
 		return false

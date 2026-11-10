@@ -444,6 +444,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	processFrame := func() *UpstreamFailoverError {
 		payload := strings.Join(frameData, "\n")
 		frameSemantic := false
+		// publicErrFrame 非 nil 时，本帧是上游的 error 帧：写给客户端的是固定英文形态，不是上游原文。
+		var publicErrFrame []byte
 		if len(frameData) > 0 && !frameTooLarge {
 			payloadBytes := []byte(payload)
 			frameDetector := newOpenAIChatSilentRefusalDetector(0)
@@ -468,6 +470,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				}
 				message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payloadBytes, message)
 				streamError = fmt.Errorf("upstream response failed: %s", message)
+				if pub := chatPublicErrorForStreamFailure(payloadBytes, message); pub.HTTPStatus > 0 {
+					publicErrFrame = pub.JSONBody()
+				}
 				// Discard the pre-error role and metadata without dropping the error frame.
 				if !clientOutputStarted {
 					pendingLines = pendingLines[:0]
@@ -538,6 +543,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 					return nil
 				}
 				flushPending()
+			}
+			if publicErrFrame != nil {
+				frameLines = replaceSSEFrameDataLines(frameLines, publicErrFrame)
 			}
 			for i, line := range frameLines {
 				semanticEnd := frameSemantic && i == len(frameLines)-1 && line == ""
@@ -762,6 +770,24 @@ streamDone:
 	}
 
 	return resultWithUsage(), nil
+}
+
+// replaceSSEFrameDataLines 把一个 SSE 帧的所有 data 行换成单行 data: <payload>，
+// event / id / 空行等其余行原样保留。
+func replaceSSEFrameDataLines(frameLines []string, payload []byte) []string {
+	out := make([]string, 0, len(frameLines))
+	replaced := false
+	for _, line := range frameLines {
+		if _, ok := extractOpenAISSEDataLine(line); ok {
+			if !replaced {
+				out = append(out, "data: "+string(payload))
+				replaced = true
+			}
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // ensureOpenAIChatStreamUsage 确保 raw Chat Completions 流式请求会让上游返回 usage。

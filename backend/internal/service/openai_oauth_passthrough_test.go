@@ -1550,7 +1550,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsErrorAndFiltersRetryAfte
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Equal(t, "application/json; charset=utf-8", rec.Header().Get("Content-Type"))
 	require.Empty(t, rec.Header().Get("Retry-After"))
-	require.JSONEq(t, `{"error":{"type":"upstream_error","message":"Upstream request failed"}}`, rec.Body.String())
+	require.JSONEq(t, `{"error":{"type":"invalid_request_error","message":"Invalid request parameters, please check the request body and try again"}}`, rec.Body.String())
 	require.NotContains(t, rec.Body.String(), "secret-upstream.example")
 }
 

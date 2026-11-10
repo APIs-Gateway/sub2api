@@ -469,7 +469,8 @@ func (s *OpenAIGatewayService) handleChatCompletionsErrorResponse(
 	account *Account,
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
-	return s.handleCompatErrorResponse(resp, c, account, writeChatCompletionsError, requestedModel...)
+	// Chat Completions 上来自上游的错误不把上游原文返回给客户端（UpstreamPublicErrorFor）。
+	return s.handleCompatErrorResponseWithOptions(resp, c, account, writeChatCompletionsError, writeChatCompletionsPublicError, requestedModel...)
 }
 
 // handleChatBufferedStreamingResponse reads all Responses SSE events from the
@@ -510,11 +511,8 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 				UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
 				UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 			})
-			clientMsg := msg
-			if clientMsg == "" {
-				clientMsg = "Request blocked by upstream cyber-security policy"
-			}
-			writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", clientMsg)
+			// 上游原文（msg）只留在 ops / 返回的 error 里，不写给客户端。
+			writeChatCompletionsPublicError(c, UpstreamPublicErrorFor(http.StatusBadRequest, payload))
 			return nil, fmt.Errorf("openai cyber_policy: %s", msg)
 		}
 		message := openAICompatFailedResponseMessage(finalResponse)
@@ -530,7 +528,11 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 			writeChatCompletionsError(c, status, errType, errMsg)
 			return nil, fmt.Errorf("upstream response failed (passthrough): %s", errMsg)
 		}
-		writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", message)
+		if pub := chatPublicErrorForStreamFailure(payload, message); pub.HTTPStatus > 0 {
+			writeChatCompletionsPublicError(c, pub)
+		} else {
+			writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", message)
+		}
 		return nil, fmt.Errorf("upstream response failed: %s", message)
 	}
 
@@ -789,11 +791,12 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				if !clientDisconnected {
 					// 被 refusal 检测扣留的 pendingSSE 有意丢弃——cyber 拦截优先于部分内容下发。
 					writeStreamHeaders()
-					clientMsg := msg
-					if clientMsg == "" {
-						clientMsg = "Request blocked by upstream cyber-security policy"
+					// 上游原文（msg）只进 ops，不写给客户端；code 保留让程序化客户端停止重试。
+					cyberPub := UpstreamPublicErrorFor(http.StatusBadRequest, payloadBytes)
+					if cyberPub.Code == "" {
+						cyberPub.Code = code
 					}
-					if _, err := fmt.Fprint(c.Writer, buildChatStreamErrorSSE(code, clientMsg)); err == nil {
+					if _, err := fmt.Fprint(c.Writer, buildChatStreamPublicErrorSSE(cyberPub)); err == nil {
 						_, _ = fmt.Fprint(c.Writer, "data: [DONE]\n\n")
 						if fl, ok := c.Writer.(http.Flusher); ok {
 							fl.Flush()
@@ -815,21 +818,29 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payloadBytes, message)
 			defaultStatus, defaultErrType, defaultMsg := http.StatusBadGateway, "upstream_error", message
+			defaultCode := ""
+			// logMsg 是上游原文，只进返回的 error（ops / 日志），不写给客户端。
+			logMsg := message
 			if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, payloadBytes, message); matched {
 				if errMsg == "" {
 					errMsg = defaultMsg
 				}
 				defaultStatus, defaultErrType, defaultMsg = status, errType, errMsg
+				logMsg = errMsg
 				MarkResponseCommitted(c)
+			} else if pub := chatPublicErrorForStreamFailure(payloadBytes, message); pub.HTTPStatus > 0 {
+				defaultStatus, defaultErrType, defaultCode, defaultMsg = pub.HTTPStatus, pub.Type, pub.Code, pub.Message
 			}
-			errorPayload, _ := json.Marshal(gin.H{
-				"error": gin.H{
-					"type":    defaultErrType,
-					"message": defaultMsg,
-				},
-			})
+			errorObject := gin.H{
+				"type":    defaultErrType,
+				"message": defaultMsg,
+			}
+			if defaultCode != "" {
+				errorObject["code"] = defaultCode
+			}
+			errorPayload, _ := json.Marshal(gin.H{"error": errorObject})
 			if c != nil && c.Writer != nil && !c.Writer.Written() {
-				writeChatCompletionsError(c, defaultStatus, defaultErrType, defaultMsg)
+				writeChatCompletionsErrorWithCode(c, defaultStatus, defaultErrType, defaultCode, defaultMsg)
 				clientOutputStarted = true
 			} else if c != nil && c.Writer != nil && !clientDisconnected {
 				if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", errorPayload); err != nil {
@@ -842,7 +853,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			if !clientDisconnected {
 				c.Writer.Flush()
 			}
-			streamNonFailoverErr = fmt.Errorf("upstream response failed: %s", defaultMsg)
+			streamNonFailoverErr = fmt.Errorf("upstream response failed: %s", logMsg)
 			return true
 		}
 
@@ -1208,6 +1219,37 @@ func writeChatCompletionsError(c *gin.Context, statusCode int, errType, message 
 			"message": message,
 		},
 	})
+}
+
+// writeChatCompletionsErrorWithCode 同 writeChatCompletionsError，code 非空时一并写出。
+func writeChatCompletionsErrorWithCode(c *gin.Context, statusCode int, errType, code, message string) {
+	MarkResponseCommitted(c)
+	errorObject := gin.H{
+		"type":    errType,
+		"message": message,
+	}
+	if code != "" {
+		errorObject["code"] = code
+	}
+	c.JSON(statusCode, gin.H{"error": errorObject})
+}
+
+// writeChatCompletionsPublicError 把 UpstreamPublicError 按 Chat Completions 错误格式写出（非流式）。
+func writeChatCompletionsPublicError(c *gin.Context, pub UpstreamPublicError) {
+	MarkResponseCommitted(c)
+	c.Data(pub.HTTPStatus, "application/json; charset=utf-8", pub.JSONBody())
+}
+
+// chatPublicErrorForStreamFailure 给「HTTP 200 SSE 里携带的上游失败事件」（response.failed / error 帧）
+// 算对外形态。事件本身没有 HTTP 状态码，沿用透传规则判定用的语义状态码。
+func chatPublicErrorForStreamFailure(payload []byte, message string) UpstreamPublicError {
+	status := openAIStreamFailedEventSemanticStatus(payload, message)
+	return UpstreamPublicErrorFor(status, openAIStreamFailedEventPassthroughBody(payload, message))
+}
+
+// buildChatStreamPublicErrorSSE 把 UpstreamPublicError 渲染成一个流内 error SSE data 帧。
+func buildChatStreamPublicErrorSSE(pub UpstreamPublicError) string {
+	return "data: " + string(pub.JSONBody()) + "\n\n"
 }
 
 // buildChatStreamErrorSSE builds one SSE data frame carrying an OpenAI chat

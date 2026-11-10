@@ -146,5 +146,5 @@ func (s *GatewayService) listConfiguredAccountsForModelDiagnosis(
 // is exactly what this diagnostic must ignore. The persistent switch is the
 // account's explicit Schedulable setting.
 func isPersistentlyEligibleModelAvailabilityAccount(account *Account) bool {
-	return account != nil && account.Status == StatusActive && account.Schedulable
+	return account != nil && account.manualStateAllowsScheduling()
 }

@@ -46,6 +46,11 @@ func (r *accountRepository) ExtendModelRateLimit(ctx context.Context, id int64, 
 		}
 		return err
 	}
+	// 「不自动暂停调度」账号不记录单模型限流。
+	if extraNoAutoUnsched(extra, id) {
+		logAutoPauseWriteSkipped(id, "extend_model_rate_limit")
+		return transaction.Commit()
+	}
 	if current := modelRateLimitResetFromExtra(extra, scope); current != nil && !current.Before(resetAt) {
 		return transaction.Commit()
 	}

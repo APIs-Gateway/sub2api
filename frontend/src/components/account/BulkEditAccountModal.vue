@@ -965,6 +965,54 @@
         </div>
       </div>
 
+      <!-- No auto-unschedule (extra.no_auto_unsched) -->
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label
+              id="bulk-edit-no-auto-unsched-label"
+              class="input-label mb-0"
+              for="bulk-edit-no-auto-unsched-enabled"
+            >
+              {{ t('admin.accounts.noAutoUnsched') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.noAutoUnschedDesc') }}
+            </p>
+          </div>
+          <input
+            v-model="enableNoAutoUnsched"
+            id="bulk-edit-no-auto-unsched-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-no-auto-unsched-body"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-no-auto-unsched-body"
+          :class="!enableNoAutoUnsched && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-no-auto-unsched-label"
+        >
+          <button
+            id="bulk-edit-no-auto-unsched-toggle"
+            type="button"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              noAutoUnsched ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="noAutoUnsched = !noAutoUnsched"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                noAutoUnsched ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- OpenAI OAuth WS mode -->
       <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
@@ -1696,6 +1744,7 @@ const enablePoolMode = ref(false)
 const enableTempUnsched = ref(false)
 const enableExpiresAt = ref(false)
 const enableAutoPauseOnExpired = ref(false)
+const enableNoAutoUnsched = ref(false)
 
 // State - field values
 const submitting = ref(false)
@@ -1728,6 +1777,7 @@ const tempUnschedEnabled = ref(false)
 const tempUnschedRules = ref<TempUnschedRuleForm[]>([])
 const expiresAtInput = ref('')
 const autoPauseOnExpired = ref(false)
+const noAutoUnsched = ref(false)
 const browserTimeZone = getBrowserTimeZone()
 const openaiPassthroughEnabled = ref(false)
 // Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
@@ -1948,6 +1998,12 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
 
   if (enableAutoPauseOnExpired.value) {
     updates.auto_pause_on_expired = autoPauseOnExpired.value
+  }
+
+  // Backend merges extra per key; send an explicit false when turning off so an existing true is overwritten
+  if (enableNoAutoUnsched.value) {
+    const extra = ensureExtra()
+    extra.no_auto_unsched = noAutoUnsched.value
   }
 
   if (enableUpstreamBillingAutoProbe.value) {
@@ -2182,6 +2238,7 @@ const handleSubmit = async () => {
     enableTempUnsched.value ||
     enableExpiresAt.value ||
     enableAutoPauseOnExpired.value ||
+    enableNoAutoUnsched.value ||
     userMsgQueueMode.value !== null
 
   if (!hasAnyFieldEnabled) {
@@ -2319,6 +2376,7 @@ watch(
       enableTempUnsched.value = false
       enableExpiresAt.value = false
       enableAutoPauseOnExpired.value = false
+      enableNoAutoUnsched.value = false
 
       // Reset all values
       baseUrl.value = ''
@@ -2347,6 +2405,7 @@ watch(
       tempUnschedRules.value = []
       expiresAtInput.value = ''
       autoPauseOnExpired.value = false
+      noAutoUnsched.value = false
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       upstreamBillingAutoProbeMode.value = 'enabled'
