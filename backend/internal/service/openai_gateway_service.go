@@ -371,6 +371,8 @@ type OpenAIGatewayService struct {
 	resolver              *ModelPricingResolver
 	channelService        *ChannelService
 	policyOverride        GroupPolicy // 显式注入的分组策略；nil 时由 channelService 构造 legacyPolicy（见 group_policy.go）
+	// 计费免锁特权名单；nil 时所有人无特权（见 billing_lockfree_users.go）。
+	billingLockFree       *BillingLockFreeUsers
 	balanceNotifyService  *BalanceNotifyService
 	settingService        *SettingService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
@@ -644,8 +646,14 @@ func (s *OpenAIGatewayService) getCodexSnapshotThrottle() *accountWriteThrottle 
 	return defaultOpenAICodexSnapshotPersistThrottle
 }
 
+// SetBillingLockFreeUsers 注入计费免锁特权名单（依赖注入时调用，必须在处理请求之前）。
+func (s *OpenAIGatewayService) SetBillingLockFreeUsers(r *BillingLockFreeUsers) {
+	s.billingLockFree = r
+}
+
 func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 	return &billingDeps{
+		billingLockFree:       s.billingLockFree,
 		accountRepo:           s.accountRepo,
 		userRepo:              s.userRepo,
 		userSubRepo:           s.userSubRepo,

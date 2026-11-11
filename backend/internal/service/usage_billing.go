@@ -52,6 +52,11 @@ type UsageBillingCommand struct {
 	// （<=0 时结算层按 1 处理）；同时也是 usage_log 展示/审计与幂等指纹分量。
 	OfficialCost   float64
 	RateMultiplier float64
+
+	// BillingLockFree 为 true 表示该用户有「计费免锁特权」（见 billing_lockfree_users.go）：
+	// 仓储层在用户没有生效中的订阅卡时，不先 SELECT ... FOR UPDATE 锁 users 行，而是在事务末尾 balance = balance - x。
+	// 只在构建命令时由名单解析器赋值；不进幂等指纹，命令也不会被序列化落库重放（带不上时按 false 处理）。
+	BillingLockFree bool
 }
 
 func (c *UsageBillingCommand) Normalize() {

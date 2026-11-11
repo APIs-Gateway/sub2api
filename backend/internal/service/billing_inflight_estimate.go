@@ -80,18 +80,29 @@ func inflightAttemptModel(request BillingInflightRequest) string {
 	return model
 }
 
-func applyInflightEstimate(ctx context.Context, repo UsageBillingRepository, cfg *config.Config, request BillingInflightRequest, amount float64, exclusive bool) (*BillingInflightLease, error) {
+// applyInflightEstimate 建立或调整在途预占。
+//
+// 「计费免锁特权」用户（lockFree 名单，见 billing_lockfree_users.go）的有价请求不建 lease、不锁 users 行
+// （公共 key 集中在同一用户名下时，预占锁是全站串行点），但仍做一次不加锁的只读准入
+// （BillingLockFreeAdmissionReader，见 billing_lockfree_admission.go）：
+// 预占同时是 WebSocket 第 2 轮起唯一的余额 / 订阅限额准入，不能随 lease 一起丢掉。
+// 只读准入被拒时返回与预占被拒相同的错误（ErrInsufficientBalance 或三种订阅限额错误）；
+// 读失败或超时同预占失败，fail-open。不计在途占用（held 当 0）。
+//
+// 判定只看三件事：请求不是 exclusive、用户在特权名单里、ctx 里还没有 lease。其他情况与上游原版完全一致：
+//   - exclusive（无价模型、估价失败、非有限金额）必须照旧走 repo 预占。它是无价模型的并发串行保护：
+//     无价按 0 元结算，不串行就能无限并发白嫖；特权用户也一样。
+//   - ctx 里已有 lease（同一请求 failover 换号）照旧 Resize，不丢 lease。
+//   - 金额为 0 且非 exclusive 的请求本来就既不预占也不准入。
+//   - 没有特权的用户（含 lockFree 为 nil）照旧预占。
+//   - repo 没有实现只读准入时 fail-closed：不跳过，照旧预占。
+func applyInflightEstimate(ctx context.Context, repo UsageBillingRepository, cfg *config.Config, lockFree *BillingLockFreeUsers, request BillingInflightRequest, amount float64, exclusive bool) (*BillingInflightLease, error) {
 	if request.APIKey == nil || request.APIKey.User == nil {
 		return nil, nil
 	}
 	if !finiteBillingInflightAmount(amount) {
 		amount = 0
 		exclusive = true
-	}
-	// 只有「有价」请求免锁；exclusive（无价模型、估价失败、非有限金额）必须照旧走 repo 预占，
-	// 它是无价模型的并发串行保护——无价按 0 元结算，不串行就能无限并发白嫖。
-	if !exclusive && skipInflightReservationForBalance(ctx, cfg, request.APIKey.User.Balance) {
-		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -100,6 +111,11 @@ func applyInflightEstimate(ctx context.Context, repo UsageBillingRepository, cfg
 	}
 	if amount == 0 && !exclusive {
 		return nil, nil
+	}
+	if !exclusive && lockFree.IsBillingLockFreeUser(request.APIKey.User.ID) {
+		if reader, ok := repo.(BillingLockFreeAdmissionReader); ok && reader != nil {
+			return nil, admitBillingLockFree(ctx, reader, cfg, request.APIKey.User.ID)
+		}
 	}
 	return newBillingInflightLease(ctx, repo, cfg, request.APIKey.User.ID, amount, exclusive)
 }
@@ -150,7 +166,7 @@ func (s *GatewayService) ReserveBillingInflight(ctx context.Context, request Bil
 		result.Usage.CacheCreation1hTokens = tokens.InputTokens
 		amount = math.Max(amount, s.calculateRecordUsageCost(ctx, result, key, model, multiplier, resolveImageRateMultiplier(key, multiplier), opts, pricingAt).ActualCost)
 	}
-	return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, request, amount, !known)
+	return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, s.billingLockFree, request, amount, !known)
 }
 
 func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, request BillingInflightRequest) (*BillingInflightLease, error) {
@@ -204,7 +220,7 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 	if request.Images == nil && request.PassthroughBillingModel == "" && IsImageGenerationIntent(openAIResponsesEndpoint, upstream, request.Body) {
 		imageCfg, err := resolveOpenAIResponsesImageBillingConfigDetailedFromBody(request.Body, upstream)
 		if err != nil {
-			return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, request, 0, true)
+			return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, s.billingLockFree, request, 0, true)
 		}
 		result.ImageCount = 1
 		result.ImageSize = imageCfg.SizeTier
@@ -225,7 +241,7 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 	pricingAt := deepseekNowFunc()
 	cost, err := s.calculateOpenAIRecordUsageCost(ctx, result, key, models, multiplier, resolveImageRateMultiplier(key, multiplier), tokens, tier, pricingAt)
 	if err != nil {
-		return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, request, 0, true)
+		return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, s.billingLockFree, request, 0, true)
 	}
 	amount := cost.ActualCost
 	if request.PassthroughBillingModel != "" {
@@ -243,7 +259,7 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 			if imageCost, err := s.calculateOpenAIRecordUsageCost(ctx, result, key, models, multiplier, resolveImageRateMultiplier(key, multiplier), imageTokens, tier, pricingAt); err == nil {
 				amount = math.Max(amount, imageCost.ActualCost)
 			} else {
-				return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, request, 0, true)
+				return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, s.billingLockFree, request, 0, true)
 			}
 		}
 	}
@@ -254,29 +270,5 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 			amount = math.Max(amount, cacheCost.ActualCost)
 		}
 	}
-	return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, request, amount, false)
-}
-
-// skipInflightReservationForBalance 余额不低于 billing.inflight_reservation.lock_free_min_balance 时跳过预占：
-// 不建 lease、不碰 users 行锁（公共 key 集中在同一用户名下时，预占锁是全站串行点）。
-//
-// 安全性（均已核实，见 billing_inflight_lockfree_test.go）：
-//   - 余额取鉴权缓存快照（最长滞后约 L2 TTL+L1 TTL，默认约 6 分钟）。阈值须远大于单次请求费用与滞后窗口内的消耗。
-//   - 订阅卡日/周/月限额：AdmitWindow 在钱包余额 > 0 时恒放行，阈值为正，所以被跳过的预占里的限额准入本就不可能拒绝。
-//   - 余额不足、key 额度、用户停用等仍由鉴权中间件与 CheckBillingEligibility（读 Redis 余额，非快照）拦截。
-//   - 阈值与余额必须是有限数；阈值 <=0、NaN、±Inf，或余额 NaN、±Inf 一律不跳过；余额等于阈值时跳过。
-//   - 已有 lease（同一请求的重试 Resize）不跳过，保持原逻辑。
-//   - 本函数不看 exclusive：调用方 applyInflightEstimate 只对非 exclusive 请求调用它。
-func skipInflightReservationForBalance(ctx context.Context, cfg *config.Config, balance float64) bool {
-	if cfg == nil {
-		return false
-	}
-	threshold := cfg.Billing.InflightReservation.LockFreeMinBalance
-	if !(threshold > 0) || math.IsInf(threshold, 0) || math.IsNaN(balance) || math.IsInf(balance, 0) {
-		return false
-	}
-	if balance < threshold {
-		return false
-	}
-	return BillingInflightLeaseFromContext(ctx) == nil
+	return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, s.billingLockFree, request, amount, false)
 }

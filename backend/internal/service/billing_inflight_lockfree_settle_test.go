@@ -14,11 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 本文件覆盖「余额 >= lock_free_min_balance 时跳过计费预占（nil lease）」之后的结算与失败路径：
+// 本文件覆盖「特权用户跳过计费预占（nil lease）」之后的结算与失败路径：
 // 无 lease 的请求照常结算、金额与有 lease 时一致、失败/取消/换号不 panic 不泄漏不多扣。
 // 测试只依赖「跳过时 applyInflightEstimate 返回 nil lease」这一行为，不依赖跳过条件的内部判断。
 
-const lockFreeSettleThreshold = 500000.0
+// lockFreeSettleUserID 是这些测试里请求所属用户；privileged 为 true 时它在特权名单里。
+const lockFreeSettleUserID = int64(601)
 
 type lockFreeSettleRepo struct {
 	inflightCaptureRepo
@@ -27,6 +28,15 @@ type lockFreeSettleRepo struct {
 	cmds     []UsageBillingCommand
 	reserves int
 	resizes  int
+	admits   int // 只读准入次数（特权用户跳过预占时）
+}
+
+// AdmitBillingLockFree 满足 BillingLockFreeAdmissionReader：这些测试里余额充足，恒放行。
+func (r *lockFreeSettleRepo) AdmitBillingLockFree(context.Context, int64) (bool, error) {
+	r.cmu.Lock()
+	r.admits++
+	r.cmu.Unlock()
+	return true, nil
 }
 
 func (r *lockFreeSettleRepo) ReserveBillingInflight(ctx context.Context, userID int64, owner string, amount float64, exclusive bool, ttl time.Duration) (bool, error) {
@@ -118,18 +128,26 @@ func lockFreeSettleKinds() []lockFreeSettleKind {
 }
 
 // lockFreeAdmit 复刻 handler 的准入：applyInflightEstimate -> reserveBillingInflightHTTP 把非 nil lease 放进请求 ctx 并 MarkDispatched。
-func lockFreeAdmit(t *testing.T, ctx context.Context, repo *lockFreeSettleRepo, threshold, balance float64, amount float64) (context.Context, *BillingInflightLease) {
+func lockFreeAdmit(t *testing.T, ctx context.Context, repo *lockFreeSettleRepo, privileged bool, amount float64) (context.Context, *BillingInflightLease) {
 	t.Helper()
 	cfg := inflightTestConfig()
-	cfg.Billing.InflightReservation.LockFreeMinBalance = threshold
-	request := BillingInflightRequest{APIKey: &APIKey{User: &User{ID: 601, Balance: balance}}}
-	lease, err := applyInflightEstimate(ctx, repo, cfg, request, amount, false)
+	request := BillingInflightRequest{APIKey: &APIKey{User: &User{ID: lockFreeSettleUserID, Balance: 991228}}}
+	lease, err := applyInflightEstimate(ctx, repo, cfg, lockFreeSettleResolver(t, privileged), request, amount, false)
 	require.NoError(t, err)
 	if lease != nil {
 		ctx = WithBillingInflightLease(ctx, lease)
 		lease.MarkDispatched()
 	}
 	return ctx, lease
+}
+
+// lockFreeSettleResolver：privileged 为 true 时名单里有 lockFreeSettleUserID；否则返回 nil 解析器（无特权）。
+func lockFreeSettleResolver(t *testing.T, privileged bool) *BillingLockFreeUsers {
+	t.Helper()
+	if !privileged {
+		return nil
+	}
+	return lockFreeTestResolver(t, lockFreeSettleUserID)
 }
 
 type lockFreeSettleOutcome struct {
@@ -139,9 +157,9 @@ type lockFreeSettleOutcome struct {
 
 // lockFreeSettleOne 复刻一个成功请求从准入到结算的完整生命周期：
 // 准入 -> 提交 usage 任务（AcquireBillingInflightTask）-> handler 返回（HandlerDone）-> worker 执行 RecordUsage -> finish(true)。
-func lockFreeSettleOne(t *testing.T, kind lockFreeSettleKind, repo *lockFreeSettleRepo, threshold, balance float64, cancelBeforeRecord bool) lockFreeSettleOutcome {
+func lockFreeSettleOne(t *testing.T, kind lockFreeSettleKind, repo *lockFreeSettleRepo, privileged bool, cancelBeforeRecord bool) lockFreeSettleOutcome {
 	t.Helper()
-	ctx, lease := lockFreeAdmit(t, context.Background(), repo, threshold, balance, 0.5)
+	ctx, lease := lockFreeAdmit(t, context.Background(), repo, privileged, 0.5)
 	attach, finish := AcquireBillingInflightTask(ctx)
 	lease.HandlerDone() // lease 为 nil 时必须是 no-op
 	workerCtx := attach(context.Background())
@@ -176,8 +194,8 @@ func TestLockFreeSettle_SettlementAmountMatchesLeasedRequest(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				leasedRepo := &lockFreeSettleRepo{inflightCaptureRepo: inflightCaptureRepo{allow: true}}
-				// 阈值 0 = 关闭跳过，等同改动前的行为：建 lease、写 obligation。
-				leased := lockFreeSettleOne(t, kind, leasedRepo, 0, 991228, cancelled)
+				// 无特权 = 等同改动前（上游原版）的行为：建 lease、写 obligation。
+				leased := lockFreeSettleOne(t, kind, leasedRepo, false, cancelled)
 				reserves, _ := leasedRepo.reserveCalls()
 				require.Equal(t, 1, reserves, "基线：未跳过时恰好预占一次")
 				leasedRepo.inflightCaptureRepo.mu.Lock()
@@ -187,7 +205,7 @@ func TestLockFreeSettle_SettlementAmountMatchesLeasedRequest(t *testing.T) {
 				require.Equal(t, "obligation", leased.cmd.InflightObligationID)
 
 				skippedRepo := &lockFreeSettleRepo{inflightCaptureRepo: inflightCaptureRepo{allow: true}}
-				skipped := lockFreeSettleOne(t, kind, skippedRepo, lockFreeSettleThreshold, 991228, cancelled)
+				skipped := lockFreeSettleOne(t, kind, skippedRepo, true, cancelled)
 				requireNoInflightTraffic(t, skippedRepo, "跳过预占的请求在结算全程不得碰预占 repo（不预占/不登记/不释放）")
 				require.Empty(t, skipped.cmd.InflightObligationID, "没有 lease 就没有 obligation，结算命令不带 inflight 标识")
 
@@ -212,7 +230,7 @@ func TestLockFreeSettle_SettlementAmountMatchesLeasedRequest(t *testing.T) {
 // 覆盖点 1/2：nil lease 下全部生命周期钩子都是安全的 no-op，且不碰 repo、不改 ctx。
 func TestLockFreeSettle_NilLeaseLifecycleHooksAreSafeNoOps(t *testing.T) {
 	repo := &lockFreeSettleRepo{inflightCaptureRepo: inflightCaptureRepo{allow: true}}
-	ctx, lease := lockFreeAdmit(t, context.Background(), repo, lockFreeSettleThreshold, 991228, 1.5)
+	ctx, lease := lockFreeAdmit(t, context.Background(), repo, true, 1.5)
 	require.Nil(t, lease)
 	require.Nil(t, BillingInflightLeaseFromContext(ctx))
 
@@ -264,7 +282,7 @@ func TestLockFreeSettle_UpstreamFailureWithoutLeaseLeavesNothingBehind(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			// 对照：有 lease。
 			leasedRepo := &lockFreeSettleRepo{inflightCaptureRepo: inflightCaptureRepo{allow: true}}
-			ctx, lease := lockFreeAdmit(t, context.Background(), leasedRepo, 0, 991228, 0.5)
+			ctx, lease := lockFreeAdmit(t, context.Background(), leasedRepo, false, 0.5)
 			require.NotNil(t, lease)
 			proof := tc.run(t, ctx)
 			lease.HandlerDone()
@@ -278,7 +296,7 @@ func TestLockFreeSettle_UpstreamFailureWithoutLeaseLeavesNothingBehind(t *testin
 
 			// 被测：跳过预占。
 			skippedRepo := &lockFreeSettleRepo{inflightCaptureRepo: inflightCaptureRepo{allow: true}}
-			ctx, lease = lockFreeAdmit(t, context.Background(), skippedRepo, lockFreeSettleThreshold, 991228, 0.5)
+			ctx, lease = lockFreeAdmit(t, context.Background(), skippedRepo, true, 0.5)
 			require.Nil(t, lease)
 			require.NotPanics(t, func() {
 				require.Equal(t, proof, tc.run(t, ctx), "失败分类不依赖 lease 是否存在")
@@ -296,15 +314,15 @@ func TestLockFreeSettle_UpstreamFailureWithoutLeaseLeavesNothingBehind(t *testin
 func TestLockFreeSettle_FailoverRetriesWithoutLeaseSettleOnlyWinningAttempt(t *testing.T) {
 	for _, kind := range lockFreeSettleKinds() {
 		t.Run(kind.name, func(t *testing.T) {
-			run := func(threshold float64) *lockFreeSettleRepo {
+			run := func(privileged bool) *lockFreeSettleRepo {
 				repo := &lockFreeSettleRepo{inflightCaptureRepo: inflightCaptureRepo{allow: true}}
 				cfg := inflightTestConfig()
-				cfg.Billing.InflightReservation.LockFreeMinBalance = threshold
-				user := &User{ID: 601, Balance: 991228}
+				resolver := lockFreeSettleResolver(t, privileged)
+				user := &User{ID: lockFreeSettleUserID, Balance: 991228}
 				ctx := context.Background()
 				for _, accountID := range []int64{701, 702, 703} {
 					request := BillingInflightRequest{APIKey: &APIKey{User: user}, Account: &Account{ID: accountID}}
-					lease, err := applyInflightEstimate(ctx, repo, cfg, request, 0.5, false)
+					lease, err := applyInflightEstimate(ctx, repo, cfg, resolver, request, 0.5, false)
 					require.NoError(t, err)
 					if lease != nil {
 						ctx = WithBillingInflightLease(ctx, lease)
@@ -322,7 +340,7 @@ func TestLockFreeSettle_FailoverRetriesWithoutLeaseSettleOnlyWinningAttempt(t *t
 				return repo
 			}
 
-			leased := run(0)
+			leased := run(false)
 			reserves, resizes := leased.reserveCalls()
 			require.Equal(t, 1, reserves, "基线：同一逻辑请求只占一个 lease")
 			require.Equal(t, 2, resizes, "基线：换号用 Resize，不新开 lease")
@@ -331,7 +349,7 @@ func TestLockFreeSettle_FailoverRetriesWithoutLeaseSettleOnlyWinningAttempt(t *t
 			leased.inflightCaptureRepo.mu.Unlock()
 			require.Len(t, leased.applied(), 1)
 
-			skipped := run(lockFreeSettleThreshold)
+			skipped := run(true)
 			requireNoInflightTraffic(t, skipped, "三次尝试都跳过预占，repo 不被触碰")
 			applied := skipped.applied()
 			require.Len(t, applied, 1, "失败的尝试不得产生扣费，只结算成功的那一次")
@@ -345,7 +363,7 @@ func TestLockFreeSettle_FailoverRetriesWithoutLeaseSettleOnlyWinningAttempt(t *t
 // 覆盖点 2：结算失败（repo.Apply 报错）时，无 lease 的请求不 panic，也不重复扣费。
 func TestLockFreeSettle_SettlementErrorWithoutLeaseDoesNotPanicOrDoubleCharge(t *testing.T) {
 	repo := &lockFreeSettleErrRepo{lockFreeSettleRepo: lockFreeSettleRepo{inflightCaptureRepo: inflightCaptureRepo{allow: true}}}
-	ctx, lease := lockFreeAdmit(t, context.Background(), &repo.lockFreeSettleRepo, lockFreeSettleThreshold, 991228, 0.5)
+	ctx, lease := lockFreeAdmit(t, context.Background(), &repo.lockFreeSettleRepo, true, 0.5)
 	require.Nil(t, lease)
 	attach, finish := AcquireBillingInflightTask(ctx)
 	lease.HandlerDone()
@@ -375,25 +393,29 @@ func (r *lockFreeSettleErrRepo) Apply(context.Context, *UsageBillingCommand) (*U
 	return nil, context.DeadlineExceeded
 }
 
-// 跳过边界：只在 余额 >= 阈值 时跳过；等于阈值跳过，略低、零余额、阈值关闭、阈值为负、cfg 为 nil 都照常预占/不 panic。
+// 跳过边界：只有「在特权名单里」才跳过；余额、名单为空、解析器为 nil、名单里是别人都照常预占；cfg 为 nil 不 panic。
 func TestLockFreeSettle_SkipBoundaryConditions(t *testing.T) {
 	cases := []struct {
 		name      string
-		threshold float64
+		resolver  *BillingLockFreeUsers
+		userID    int64
 		balance   float64
 		wantLease bool
 	}{
-		{"equal_to_threshold_skips", lockFreeSettleThreshold, lockFreeSettleThreshold, false},
-		{"just_below_threshold_reserves", lockFreeSettleThreshold, lockFreeSettleThreshold - 0.01, true},
-		{"zero_balance_reserves", lockFreeSettleThreshold, 0, true},
-		{"negative_balance_reserves", lockFreeSettleThreshold, -5, true},
-		{"threshold_disabled_reserves", 0, 991228, true},
-		{"negative_threshold_is_disabled", -1, 991228, true},
+		{"privileged_skips", lockFreeTestResolver(t, 601), 601, 991228, false},
+		{"privileged_skips_even_with_zero_balance", lockFreeTestResolver(t, 601), 601, 0, false},
+		{"privileged_skips_even_with_negative_balance", lockFreeTestResolver(t, 601), 601, -5, false},
+		{"unprivileged_high_balance_reserves", lockFreeTestResolver(t, 999), 601, 991228, true},
+		{"unprivileged_zero_balance_reserves", lockFreeTestResolver(t, 999), 601, 0, true},
+		{"empty_list_reserves", lockFreeTestResolver(t), 601, 991228, true},
+		{"nil_resolver_reserves", nil, 601, 991228, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &lockFreeSettleRepo{inflightCaptureRepo: inflightCaptureRepo{allow: true}}
-			_, lease := lockFreeAdmit(t, context.Background(), repo, tc.threshold, tc.balance, 1.5)
+			request := BillingInflightRequest{APIKey: &APIKey{User: &User{ID: tc.userID, Balance: tc.balance}}}
+			lease, err := applyInflightEstimate(context.Background(), repo, inflightTestConfig(), tc.resolver, request, 1.5, false)
+			require.NoError(t, err)
 			if tc.wantLease {
 				require.NotNil(t, lease)
 				defer lease.HandlerDone()
@@ -406,28 +428,29 @@ func TestLockFreeSettle_SkipBoundaryConditions(t *testing.T) {
 		})
 	}
 
-	t.Run("nil_config_does_not_panic", func(t *testing.T) {
-		repo := &lockFreeSettleRepo{inflightCaptureRepo: inflightCaptureRepo{allow: true}}
-		request := BillingInflightRequest{APIKey: &APIKey{User: &User{ID: 1, Balance: 991228}}}
-		require.NotPanics(t, func() {
-			lease, err := applyInflightEstimate(context.Background(), repo, nil, request, 1, false)
-			require.NoError(t, err)
-			require.Nil(t, lease) // 没有配置就没有预占能力（与改动前一致）
+	for name, resolver := range map[string]*BillingLockFreeUsers{"nil_resolver": nil, "privileged": lockFreeTestResolver(t, 1)} {
+		t.Run("nil_config_does_not_panic/"+name, func(t *testing.T) {
+			repo := &lockFreeSettleRepo{inflightCaptureRepo: inflightCaptureRepo{allow: true}}
+			request := BillingInflightRequest{APIKey: &APIKey{User: &User{ID: 1, Balance: 991228}}}
+			require.NotPanics(t, func() {
+				lease, err := applyInflightEstimate(context.Background(), repo, nil, resolver, request, 1, false)
+				require.NoError(t, err)
+				require.Nil(t, lease) // 没有配置就没有预占能力（与改动前一致）
+			})
 		})
-	})
+	}
 }
 
-// 已有 lease 时（同一请求第二次尝试，或第二次尝试换了高余额用户）不能把 lease 丢掉：继续 Resize 同一个 lease。
-func TestLockFreeSettle_ExistingLeaseIsResizedNotDroppedOnHighBalanceRetry(t *testing.T) {
+// 已有 lease 时（同一请求第二次尝试，或第二次尝试换了特权用户）不能把 lease 丢掉：继续 Resize 同一个 lease。
+func TestLockFreeSettle_ExistingLeaseIsResizedNotDroppedOnPrivilegedRetry(t *testing.T) {
 	repo := &lockFreeSettleRepo{inflightCaptureRepo: inflightCaptureRepo{allow: true}}
-	ctx, lease := lockFreeAdmit(t, context.Background(), repo, lockFreeSettleThreshold, 100, 1) // 低余额：建 lease
+	ctx, lease := lockFreeAdmit(t, context.Background(), repo, false, 1) // 无特权：建 lease
 	require.NotNil(t, lease)
 	MarkBillingInflightAttemptNoCharge(ctx)
 
 	cfg := inflightTestConfig()
-	cfg.Billing.InflightReservation.LockFreeMinBalance = lockFreeSettleThreshold
 	retry := BillingInflightRequest{APIKey: &APIKey{User: &User{ID: 999, Balance: 991228}}}
-	got, err := applyInflightEstimate(ctx, repo, cfg, retry, 2, false)
+	got, err := applyInflightEstimate(ctx, repo, cfg, lockFreeTestResolver(t, 999), retry, 2, false)
 	require.NoError(t, err)
 	require.Same(t, lease, got)
 	reserves, resizes := repo.reserveCalls()
@@ -445,8 +468,8 @@ func TestLockFreeSettle_ExistingLeaseIsResizedNotDroppedOnHighBalanceRetry(t *te
 	require.Equal(t, 1, repo.releases, "该 lease 仍被正常释放，不泄漏")
 }
 
-// 未知价格（exclusive）与金额非有限的请求在高余额下仍必须走预占：这类请求没有可信的成本上界。
-func TestLockFreeSettle_ExclusiveAndNonFiniteEstimatesStillReserveAtHighBalance(t *testing.T) {
+// 未知价格（exclusive）与金额非有限的请求，特权用户也仍必须走预占：这类请求没有可信的成本上界。
+func TestLockFreeSettle_ExclusiveAndNonFiniteEstimatesStillReserveForPrivilegedUser(t *testing.T) {
 	cases := []struct {
 		name      string
 		amount    float64
@@ -461,11 +484,10 @@ func TestLockFreeSettle_ExclusiveAndNonFiniteEstimatesStillReserveAtHighBalance(
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &lockFreeSettleRepo{inflightCaptureRepo: inflightCaptureRepo{allow: true}}
 			cfg := inflightTestConfig()
-			cfg.Billing.InflightReservation.LockFreeMinBalance = lockFreeSettleThreshold
 			request := BillingInflightRequest{APIKey: &APIKey{User: &User{ID: 601, Balance: 991228}}}
-			lease, err := applyInflightEstimate(context.Background(), repo, cfg, request, tc.amount, tc.exclusive)
+			lease, err := applyInflightEstimate(context.Background(), repo, cfg, lockFreeTestResolver(t, 601), request, tc.amount, tc.exclusive)
 			require.NoError(t, err)
-			require.NotNil(t, lease, "高余额也不能跳过没有可信成本上界的请求")
+			require.NotNil(t, lease, "特权用户也不能跳过没有可信成本上界的请求")
 			defer lease.HandlerDone()
 			reserves, _ := repo.reserveCalls()
 			require.Equal(t, 1, reserves)
@@ -487,7 +509,7 @@ func TestLockFreeSettle_ConcurrentSkippedRequestsSettleExactlyOnce(t *testing.T)
 		go func(i int) {
 			defer wg.Done()
 			kind := kinds[i%len(kinds)]
-			ctx, lease := lockFreeAdmit(t, context.Background(), repo, lockFreeSettleThreshold, 991228, 0.5)
+			ctx, lease := lockFreeAdmit(t, context.Background(), repo, true, 0.5)
 			if lease != nil {
 				t.Errorf("request %d unexpectedly reserved", i)
 				return

@@ -877,6 +877,8 @@ type GatewayService struct {
 	debugClaudeMimic      atomic.Bool
 	channelService        *ChannelService
 	policyOverride        GroupPolicy // 显式注入的分组策略；nil 时由 channelService 构造 legacyPolicy（见 group_policy.go）
+	// 计费免锁特权名单；nil 时所有人无特权（见 billing_lockfree_users.go）。
+	billingLockFree       *BillingLockFreeUsers
 	resolver              *ModelPricingResolver
 	debugGatewayBodyFile  atomic.Pointer[os.File] // non-nil when SUB2API_DEBUG_GATEWAY_BODY is set
 	tlsFPProfileService   *TLSFingerprintProfileService
@@ -9866,6 +9868,10 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	}
 
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
+	if cmd != nil {
+		// p.User 非 nil 已由 buildUsageBillingCommand 保证；解析器为 nil 时恒为 false。
+		cmd.BillingLockFree = deps.billingLockFree.IsBillingLockFreeUser(p.User.ID)
+	}
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
 		postUsageBilling(ctx, p, deps)
 		recordPublicBenefitIPSpend(ctx, deps, p, usageLog)
@@ -10119,10 +10125,17 @@ type billingDeps struct {
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	cfg                   *config.Config
+	billingLockFree       *BillingLockFreeUsers
+}
+
+// SetBillingLockFreeUsers 注入计费免锁特权名单（依赖注入时调用，必须在处理请求之前）。
+func (s *GatewayService) SetBillingLockFreeUsers(r *BillingLockFreeUsers) {
+	s.billingLockFree = r
 }
 
 func (s *GatewayService) billingDeps() *billingDeps {
 	return &billingDeps{
+		billingLockFree:       s.billingLockFree,
 		accountRepo:           s.accountRepo,
 		userRepo:              s.userRepo,
 		userSubRepo:           s.userSubRepo,

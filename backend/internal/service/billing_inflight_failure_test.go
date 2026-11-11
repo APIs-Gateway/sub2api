@@ -178,7 +178,7 @@ func TestBillingInflight_ProofLimitsPreserveDispatchedEstimate(t *testing.T) {
 func TestBillingInflight_NonFinitePriceCannotBypassUnknownExclusive(t *testing.T) {
 	for _, amount := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), -0.5} {
 		repo := &inflightCaptureRepo{allow: true}
-		lease, err := applyInflightEstimate(context.Background(), repo, inflightTestConfig(), BillingInflightRequest{APIKey: &APIKey{User: &User{ID: 1}}}, amount, false)
+		lease, err := applyInflightEstimate(context.Background(), repo, inflightTestConfig(), nil, BillingInflightRequest{APIKey: &APIKey{User: &User{ID: 1}}}, amount, false)
 		require.NoError(t, err)
 		require.NotNil(t, lease)
 		require.Zero(t, repo.amount)

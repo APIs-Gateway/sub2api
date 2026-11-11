@@ -110,6 +110,7 @@ func provideCleanup(
 	promptAudit *securityaudit.PromptService,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	adminAuditWriter *service.AdminAuditWriter,
+	billingLockFreeUsers *service.BillingLockFreeUsers,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -307,6 +308,11 @@ func provideCleanup(
 				if adminAuditWriter != nil {
 					adminAuditWriter.Stop(ctx)
 				}
+				return nil
+			}},
+			{"BillingLockFreeUsers", func() error {
+				// 停止特权名单的后台刷新，取消并等待进行中的刷新退出（nil 安全）。
+				billingLockFreeUsers.Close()
 				return nil
 			}},
 		}

@@ -23,14 +23,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 入口层测试：余额 >= billing.inflight_reservation.lock_free_min_balance 时 OpenAI(Responses / Chat Completions)
-// 与 Gateway(Claude Messages) 入口正常放行且不调用预占 repo；余额低于阈值照常预占；余额不足仍被原有的
+// 入口层测试：「计费免锁特权」用户（用户属性 billing_lockfree=true，进名单解析器）走 OpenAI(Responses / Chat Completions)
+// 与 Gateway(Claude Messages) 入口时正常放行且不调用预占 repo；无特权用户照常预占（与余额无关）；余额不足仍被原有的
 // 计费准入（BillingCacheService.CheckBillingEligibility，billing_cache_service.go checkBalanceEligibility）拒绝。
 //
 // 拒绝发生在 handler 里 CheckBillingEligibility 之后、选号与 reserveBillingInflightHTTP 之前，
 // 所以跳过预占既不会改变拒绝结果，也不会让被拒的请求走到上游。
 
-const lockFreeHandlerThreshold = 500000.0
+// lockFreeHandlerLister 是名单解析器的数据源桩：ids 里的用户视为 billing_lockfree=true。
+type lockFreeHandlerLister struct{ ids []int64 }
+
+func (l lockFreeHandlerLister) ListBillingLockFreeAttributeValues(context.Context) ([]service.BillingLockFreeAttributeValue, error) {
+	rows := make([]service.BillingLockFreeAttributeValue, 0, len(l.ids))
+	for _, id := range l.ids {
+		rows = append(rows, service.BillingLockFreeAttributeValue{UserID: id, Value: "true"})
+	}
+	return rows, nil
+}
+
+// newLockFreeHandlerResolver 返回已同步加载完成的名单解析器；ids 为空时名单为空（所有人无特权）。
+func newLockFreeHandlerResolver(t *testing.T, ids ...int64) *service.BillingLockFreeUsers {
+	t.Helper()
+	r := service.NewBillingLockFreeUsers(lockFreeHandlerLister{ids: ids})
+	t.Cleanup(r.Close)
+	require.NoError(t, r.Refresh(context.Background()))
+	return r
+}
 
 // ---- 假仓储 ----
 
@@ -41,6 +59,7 @@ type lockFreeHandlerBillingRepo struct {
 
 	mu                                            sync.Mutex
 	reserves, resizes, stages, finishes, releases int
+	admits                                        int // 只读准入次数（特权用户跳过预占时）
 	reserveExclusive                              []bool
 	reserveAmounts                                []float64
 	cmds                                          chan *service.UsageBillingCommand
@@ -54,6 +73,20 @@ func (r *lockFreeHandlerBillingRepo) Apply(_ context.Context, cmd *service.Usage
 	cp := *cmd
 	r.cmds <- &cp
 	return &service.UsageBillingApplyResult{Applied: true}, nil
+}
+
+// AdmitBillingLockFree 满足 service.BillingLockFreeAdmissionReader：这些 HTTP 测试里余额充足，恒放行。
+func (r *lockFreeHandlerBillingRepo) AdmitBillingLockFree(context.Context, int64) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.admits++
+	return true, nil
+}
+
+func (r *lockFreeHandlerBillingRepo) admitCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.admits
 }
 
 func (r *lockFreeHandlerBillingRepo) ReserveBillingInflight(_ context.Context, _ int64, _ string, amount float64, exclusive bool, _ time.Duration) (bool, error) {
@@ -147,7 +180,7 @@ func (r *lockFreeUserRepo) GetByID(_ context.Context, id int64) (*service.User, 
 	return &service.User{ID: id, Status: service.StatusActive, Balance: r.balance}, nil
 }
 
-func lockFreeConfig(threshold float64) *config.Config {
+func lockFreeConfig() *config.Config {
 	cfg := &config.Config{}
 	cfg.RunMode = config.RunModeStandard
 	cfg.Default.RateMultiplier = 1
@@ -157,20 +190,33 @@ func lockFreeConfig(threshold float64) *config.Config {
 	cfg.Billing.InflightReservation.Enabled = true
 	cfg.Billing.InflightReservation.TTLSeconds = 900
 	cfg.Billing.InflightReservation.DefaultMaxOutputTokens = 8192
-	cfg.Billing.InflightReservation.LockFreeMinBalance = threshold
 	return cfg
 }
 
 // ---- OpenAI 入口（Responses / Chat Completions）----
 
 type lockFreeScenario struct {
-	threshold       float64
-	snapshotBalance float64 // API Key 鉴权快照里的 User.Balance（预占跳过判断读它）
+	privileged      bool    // 请求所属用户在特权名单里
+	otherPrivileged bool    // 名单里只有别的用户（本用户无特权）
+	snapshotBalance float64 // API Key 鉴权快照里的 User.Balance（不影响特权判定）
 	freshBalance    float64 // 计费准入读的余额（缓存/DB）
 	// failFirst 为 true 时账号 11 返回 520（触发 failover），账号 21 成功。
 	failFirst bool
 	// onDo 在上游收到请求时调用（模拟客户端取消等）。
 	onDo func()
+}
+
+// resolver 按场景构造名单解析器：privileged 时名单里有 userID；otherPrivileged 时名单里只有别人；否则为 nil（依赖没注入）。
+func (s lockFreeScenario) resolver(t *testing.T, userID int64) *service.BillingLockFreeUsers {
+	t.Helper()
+	switch {
+	case s.privileged:
+		return newLockFreeHandlerResolver(t, userID)
+	case s.otherPrivileged:
+		return newLockFreeHandlerResolver(t, userID+1000)
+	default:
+		return nil
+	}
 }
 
 type lockFreeOpenAIHarness struct {
@@ -183,7 +229,7 @@ type lockFreeOpenAIHarness struct {
 func newLockFreeOpenAIHarness(t *testing.T, s lockFreeScenario) *lockFreeOpenAIHarness {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	cfg := lockFreeConfig(s.threshold)
+	cfg := lockFreeConfig()
 
 	group := chainRespGroup(1, 1, 0)
 	accounts := []service.Account{keepaliveMismatchAccount(11, 1, nil)}
@@ -227,6 +273,7 @@ func newLockFreeOpenAIHarness(t *testing.T, s lockFreeScenario) *lockFreeOpenAIH
 		&service.DeferredService{},
 		nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
+	gateway.SetBillingLockFreeUsers(s.resolver(t, chainRespUserID))
 	handler := NewOpenAIGatewayHandler(gateway, concurrency, billingCache, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), newUsageRecordTestPool(t), nil, nil, nil, cfg)
 	handler.concurrencyHelper = NewConcurrencyHelper(concurrency, SSEPingFormatNone, time.Second)
 	handler.maxAccountSwitches = 3
@@ -270,11 +317,11 @@ func (h *lockFreeOpenAIHarness) serve(ctx context.Context, path, body string) *h
 	return rec
 }
 
-// 覆盖点 3：高余额 -> 放行、零预占调用，结算照常扣费且命令不带 inflight 标识。
-func TestLockFreeHandler_OpenAIHighBalanceSkipsReservationAndStillSettles(t *testing.T) {
+// 覆盖点 3：特权用户 -> 放行、零预占调用，结算照常扣费且命令不带 inflight 标识，带 BillingLockFree。
+func TestLockFreeHandler_OpenAIPrivilegedSkipsReservationAndStillSettles(t *testing.T) {
 	for _, route := range lockFreeOpenAIRoutes {
 		t.Run(route.name, func(t *testing.T) {
-			h := newLockFreeOpenAIHarness(t, lockFreeScenario{threshold: lockFreeHandlerThreshold, snapshotBalance: 991228, freshBalance: 991228})
+			h := newLockFreeOpenAIHarness(t, lockFreeScenario{privileged: true, snapshotBalance: 991228, freshBalance: 991228})
 			rec := h.serve(context.Background(), route.path, route.body)
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 			require.Equal(t, []int64{11}, h.upstream.accountCalls())
@@ -282,6 +329,7 @@ func TestLockFreeHandler_OpenAIHighBalanceSkipsReservationAndStillSettles(t *tes
 			cmd := h.billing.waitCommand(t)
 			require.Greater(t, cmd.BalanceCost, 0.0, "必须真实扣费")
 			require.Empty(t, cmd.InflightObligationID, "没有 lease，结算命令不带 obligation")
+			require.True(t, cmd.BillingLockFree, "特权用户的结算命令带 BillingLockFree")
 			require.Equal(t, int64(11), cmd.AccountID)
 			select {
 			case log := <-h.usageLogs:
@@ -291,28 +339,30 @@ func TestLockFreeHandler_OpenAIHighBalanceSkipsReservationAndStillSettles(t *tes
 			}
 			h.billing.requireNoMoreCommands(t)
 			require.Equal(t, lockFreeCounts{}, h.billing.counts(), "跳过预占：预占 repo（预占/续约/登记/释放）零调用")
+			require.Equal(t, 1, h.billing.admitCount(), "跳过预占，但做一次只读准入")
 		})
 	}
 }
 
-// 覆盖点 3：余额低于阈值 / 阈值关闭 -> 照常预占，结算带 obligation 并释放 lease。扣费金额与跳过时一致。
-func TestLockFreeHandler_OpenAIBelowThresholdOrDisabledStillReserves(t *testing.T) {
+// 覆盖点 3：无特权用户（余额高/低、解析器为 nil、名单里只有别人）-> 照常预占，结算带 obligation 并释放 lease，
+// 命令不带 BillingLockFree。扣费金额与特权用户（跳过预占）时一致。
+func TestLockFreeHandler_OpenAIUnprivilegedStillReserves(t *testing.T) {
 	cases := []struct {
-		name      string
-		threshold float64
-		balance   float64
+		name     string
+		scenario lockFreeScenario
 	}{
-		{"just_below_threshold", lockFreeHandlerThreshold, lockFreeHandlerThreshold - 0.01},
-		{"threshold_disabled", 0, 991228},
+		{"high_balance_nil_resolver", lockFreeScenario{snapshotBalance: 991228, freshBalance: 991228}},
+		{"low_balance_nil_resolver", lockFreeScenario{snapshotBalance: 100, freshBalance: 100}},
+		{"high_balance_list_has_other_user", lockFreeScenario{otherPrivileged: true, snapshotBalance: 991228, freshBalance: 991228}},
 	}
 	for _, route := range lockFreeOpenAIRoutes {
-		skipped := newLockFreeOpenAIHarness(t, lockFreeScenario{threshold: lockFreeHandlerThreshold, snapshotBalance: 991228, freshBalance: 991228})
+		skipped := newLockFreeOpenAIHarness(t, lockFreeScenario{privileged: true, snapshotBalance: 991228, freshBalance: 991228})
 		require.Equal(t, http.StatusOK, skipped.serve(context.Background(), route.path, route.body).Code)
 		skippedCmd := skipped.billing.waitCommand(t)
 
 		for _, tc := range cases {
 			t.Run(route.name+"/"+tc.name, func(t *testing.T) {
-				h := newLockFreeOpenAIHarness(t, lockFreeScenario{threshold: tc.threshold, snapshotBalance: tc.balance, freshBalance: tc.balance})
+				h := newLockFreeOpenAIHarness(t, tc.scenario)
 				rec := h.serve(context.Background(), route.path, route.body)
 				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 				cmd := h.billing.waitCommand(t)
@@ -321,25 +371,24 @@ func TestLockFreeHandler_OpenAIBelowThresholdOrDisabledStillReserves(t *testing.
 				got := h.billing.counts()
 				require.Equal(t, lockFreeCounts{reserves: 1, stages: 1, finishes: got.finishes, releases: 1}, got, "基线：恰好预占一次、登记一次、释放一次")
 				require.NotEmpty(t, cmd.InflightObligationID)
+				require.False(t, cmd.BillingLockFree, "无特权用户的结算命令不带 BillingLockFree")
 				h.billing.mu.Lock()
 				require.False(t, h.billing.reserveExclusive[0], "已知价格的模型不应是 exclusive 预占")
 				require.Greater(t, h.billing.reserveAmounts[0], 0.0)
 				h.billing.mu.Unlock()
 
-				want := *skippedCmd
-				want.InflightObligationID = cmd.InflightObligationID
 				// 请求 ID 由上游响应决定，同一脚本下一致；金额/倍率/token 必须与跳过时完全一致。
-				require.Equal(t, want.BalanceCost, cmd.BalanceCost)
-				require.Equal(t, want.OfficialCost, cmd.OfficialCost)
-				require.Equal(t, want.RateMultiplier, cmd.RateMultiplier)
-				require.Equal(t, want.InputTokens, cmd.InputTokens)
-				require.Equal(t, want.OutputTokens, cmd.OutputTokens)
+				require.Equal(t, skippedCmd.BalanceCost, cmd.BalanceCost)
+				require.Equal(t, skippedCmd.OfficialCost, cmd.OfficialCost)
+				require.Equal(t, skippedCmd.RateMultiplier, cmd.RateMultiplier)
+				require.Equal(t, skippedCmd.InputTokens, cmd.InputTokens)
+				require.Equal(t, skippedCmd.OutputTokens, cmd.OutputTokens)
 			})
 		}
 	}
 }
 
-// 覆盖点 3：余额不足（<=0）的用户仍被原有计费准入拒绝；拒绝发生在选号/预占之前，所以不论阈值开不开，
+// 覆盖点 3：余额不足（<=0）的用户仍被原有计费准入拒绝（特权用户也一样）；拒绝发生在选号/预占之前，所以不论有没有特权，
 // 状态码与响应都一致、预占 repo 零调用、上游零调用、不产生扣费。
 func TestLockFreeHandler_OpenAIInsufficientBalanceStillRejectedByEligibility(t *testing.T) {
 	cases := []struct {
@@ -355,17 +404,17 @@ func TestLockFreeHandler_OpenAIInsufficientBalanceStillRejectedByEligibility(t *
 	for _, route := range lockFreeOpenAIRoutes {
 		for _, tc := range cases {
 			t.Run(route.name+"/"+tc.name, func(t *testing.T) {
-				withThreshold := newLockFreeOpenAIHarness(t, lockFreeScenario{threshold: lockFreeHandlerThreshold, snapshotBalance: tc.snapshotBalance, freshBalance: tc.freshBalance})
-				recOn := withThreshold.serve(context.Background(), route.path, route.body)
-				baseline := newLockFreeOpenAIHarness(t, lockFreeScenario{threshold: 0, snapshotBalance: tc.snapshotBalance, freshBalance: tc.freshBalance})
+				withPrivilege := newLockFreeOpenAIHarness(t, lockFreeScenario{privileged: true, snapshotBalance: tc.snapshotBalance, freshBalance: tc.freshBalance})
+				recOn := withPrivilege.serve(context.Background(), route.path, route.body)
+				baseline := newLockFreeOpenAIHarness(t, lockFreeScenario{snapshotBalance: tc.snapshotBalance, freshBalance: tc.freshBalance})
 				recOff := baseline.serve(context.Background(), route.path, route.body)
 
 				require.GreaterOrEqual(t, recOn.Code, 400, recOn.Body.String())
 				require.Equal(t, http.StatusForbidden, recOn.Code, "余额不足由 billingErrorDetails 映射成 403")
 				require.Contains(t, strings.ToLower(recOn.Body.String()), "insufficient")
-				require.Equal(t, recOff.Code, recOn.Code, "开关不改变拒绝结果")
+				require.Equal(t, recOff.Code, recOn.Code, "特权不改变拒绝结果")
 				require.Equal(t, recOff.Body.String(), recOn.Body.String())
-				for _, h := range []*lockFreeOpenAIHarness{withThreshold, baseline} {
+				for _, h := range []*lockFreeOpenAIHarness{withPrivilege, baseline} {
 					require.Empty(t, h.upstream.accountCalls(), "被拒请求不会走到上游")
 					require.Equal(t, lockFreeCounts{}, h.billing.counts(), "被拒请求不碰预占 repo")
 					h.billing.requireNoMoreCommands(t)
@@ -375,11 +424,11 @@ func TestLockFreeHandler_OpenAIInsufficientBalanceStillRejectedByEligibility(t *
 	}
 }
 
-// 覆盖点 2/3：failover 换号。高余额时两次尝试都跳过预占，只结算成功的账号一次；对照（阈值关）是 Resize 同一 lease。
+// 覆盖点 2/3：failover 换号。特权用户两次尝试都跳过预占，只结算成功的账号一次；对照（无特权）是 Resize 同一 lease。
 func TestLockFreeHandler_OpenAIFailoverWithoutLeaseSettlesWinnerOnce(t *testing.T) {
 	for _, route := range lockFreeOpenAIRoutes {
 		t.Run(route.name, func(t *testing.T) {
-			skipped := newLockFreeOpenAIHarness(t, lockFreeScenario{threshold: lockFreeHandlerThreshold, snapshotBalance: 991228, freshBalance: 991228, failFirst: true})
+			skipped := newLockFreeOpenAIHarness(t, lockFreeScenario{privileged: true, snapshotBalance: 991228, freshBalance: 991228, failFirst: true})
 			rec := skipped.serve(context.Background(), route.path, route.body)
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 			require.Equal(t, []int64{11, 21}, skipped.upstream.accountCalls(), "第一个账号失败后换号")
@@ -389,7 +438,7 @@ func TestLockFreeHandler_OpenAIFailoverWithoutLeaseSettlesWinnerOnce(t *testing.
 			skipped.billing.requireNoMoreCommands(t)
 			require.Equal(t, lockFreeCounts{}, skipped.billing.counts(), "两次尝试都不碰预占 repo，也没有泄漏的 lease")
 
-			leased := newLockFreeOpenAIHarness(t, lockFreeScenario{threshold: 0, snapshotBalance: 991228, freshBalance: 991228, failFirst: true})
+			leased := newLockFreeOpenAIHarness(t, lockFreeScenario{snapshotBalance: 991228, freshBalance: 991228, failFirst: true})
 			require.Equal(t, http.StatusOK, leased.serve(context.Background(), route.path, route.body).Code)
 			leasedCmd := leased.billing.waitCommand(t)
 			lockFreeWaitUntil(t, "known cost staged", func() bool { return leased.billing.counts().stages == 1 })
@@ -411,10 +460,10 @@ func TestLockFreeHandler_OpenAIFailoverWithoutLeaseSettlesWinnerOnce(t *testing.
 func TestLockFreeHandler_OpenAIClientCancelMidRequestBehavesLikeLeasedRequest(t *testing.T) {
 	for _, route := range lockFreeOpenAIRoutes {
 		t.Run(route.name, func(t *testing.T) {
-			run := func(threshold float64) (commands int, h *lockFreeOpenAIHarness) {
+			run := func(privileged bool) (commands int, h *lockFreeOpenAIHarness) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
-				h = newLockFreeOpenAIHarness(t, lockFreeScenario{threshold: threshold, snapshotBalance: 991228, freshBalance: 991228, onDo: cancel})
+				h = newLockFreeOpenAIHarness(t, lockFreeScenario{privileged: privileged, snapshotBalance: 991228, freshBalance: 991228, onDo: cancel})
 				require.NotPanics(t, func() { h.serve(ctx, route.path, route.body) })
 				for {
 					select {
@@ -426,8 +475,8 @@ func TestLockFreeHandler_OpenAIClientCancelMidRequestBehavesLikeLeasedRequest(t 
 					return commands, h
 				}
 			}
-			leasedCommands, leased := run(0)
-			skippedCommands, skipped := run(lockFreeHandlerThreshold)
+			leasedCommands, leased := run(false)
+			skippedCommands, skipped := run(true)
 			require.Equal(t, leasedCommands, skippedCommands, "取消后的结算次数与有 lease 时一致（不多扣、不漏扣）")
 			require.LessOrEqual(t, skippedCommands, 1)
 			require.Equal(t, 1, leased.billing.counts().reserves, "基线：有 lease 时发生了预占")
@@ -491,7 +540,7 @@ type lockFreeMessagesHarness struct {
 func newLockFreeMessagesHarness(t *testing.T, s lockFreeScenario, failures int32) *lockFreeMessagesHarness {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	cfg := lockFreeConfig(s.threshold)
+	cfg := lockFreeConfig()
 	groupID := int64(9161)
 	group := &service.Group{ID: groupID, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive, RateMultiplier: 1}
 	account := func(id int64) *service.Account {
@@ -522,6 +571,7 @@ func newLockFreeMessagesHarness(t *testing.T, s lockFreeScenario, failures int32
 		nil, upstream, &service.DeferredService{},
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
+	gw.SetBillingLockFreeUsers(s.resolver(t, 9461))
 	h := &GatewayHandler{
 		gatewayService:           gw,
 		billingCacheService:      billingCache,
@@ -551,36 +601,37 @@ func (h *lockFreeMessagesHarness) serve(ctx context.Context) *httptest.ResponseR
 	return rec
 }
 
-// 覆盖点 3：Gateway(Claude messages) 高余额放行、零预占调用，结算照常。
-func TestLockFreeHandler_MessagesHighBalanceSkipsReservationAndStillSettles(t *testing.T) {
-	h := newLockFreeMessagesHarness(t, lockFreeScenario{threshold: lockFreeHandlerThreshold, snapshotBalance: 991228, freshBalance: 991228}, 0)
+// 覆盖点 3：Gateway(Claude messages) 特权用户放行、零预占调用，结算照常。
+func TestLockFreeHandler_MessagesPrivilegedSkipsReservationAndStillSettles(t *testing.T) {
+	h := newLockFreeMessagesHarness(t, lockFreeScenario{privileged: true, snapshotBalance: 991228, freshBalance: 991228}, 0)
 	defer h.cleanup()
 	rec := h.serve(context.Background())
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	cmd := h.billing.waitCommand(t)
 	require.Greater(t, cmd.BalanceCost, 0.0)
 	require.Empty(t, cmd.InflightObligationID)
+	require.True(t, cmd.BillingLockFree)
 	h.billing.requireNoMoreCommands(t)
 	require.Equal(t, lockFreeCounts{}, h.billing.counts(), "跳过预占：预占 repo 零调用")
 }
 
-// 覆盖点 3：Gateway 低于阈值 / 阈值关闭照常预占，金额与跳过时一致。
-func TestLockFreeHandler_MessagesBelowThresholdOrDisabledStillReserves(t *testing.T) {
-	skipped := newLockFreeMessagesHarness(t, lockFreeScenario{threshold: lockFreeHandlerThreshold, snapshotBalance: 991228, freshBalance: 991228}, 0)
+// 覆盖点 3：Gateway 无特权用户（余额高/低、解析器为 nil、名单里只有别人）照常预占，金额与特权用户（跳过预占）时一致。
+func TestLockFreeHandler_MessagesUnprivilegedStillReserves(t *testing.T) {
+	skipped := newLockFreeMessagesHarness(t, lockFreeScenario{privileged: true, snapshotBalance: 991228, freshBalance: 991228}, 0)
 	defer skipped.cleanup()
 	require.Equal(t, http.StatusOK, skipped.serve(context.Background()).Code)
 	skippedCmd := skipped.billing.waitCommand(t)
 
 	for _, tc := range []struct {
-		name      string
-		threshold float64
-		balance   float64
+		name     string
+		scenario lockFreeScenario
 	}{
-		{"just_below_threshold", lockFreeHandlerThreshold, lockFreeHandlerThreshold - 0.01},
-		{"threshold_disabled", 0, 991228},
+		{"high_balance_nil_resolver", lockFreeScenario{snapshotBalance: 991228, freshBalance: 991228}},
+		{"low_balance_nil_resolver", lockFreeScenario{snapshotBalance: 100, freshBalance: 100}},
+		{"high_balance_list_has_other_user", lockFreeScenario{otherPrivileged: true, snapshotBalance: 991228, freshBalance: 991228}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newLockFreeMessagesHarness(t, lockFreeScenario{threshold: tc.threshold, snapshotBalance: tc.balance, freshBalance: tc.balance}, 0)
+			h := newLockFreeMessagesHarness(t, tc.scenario, 0)
 			defer h.cleanup()
 			require.Equal(t, http.StatusOK, h.serve(context.Background()).Code)
 			cmd := h.billing.waitCommand(t)
@@ -590,13 +641,14 @@ func TestLockFreeHandler_MessagesBelowThresholdOrDisabledStillReserves(t *testin
 			require.Equal(t, 1, got.stages)
 			require.Equal(t, 1, got.releases)
 			require.NotEmpty(t, cmd.InflightObligationID)
+			require.False(t, cmd.BillingLockFree)
 			require.Equal(t, skippedCmd.BalanceCost, cmd.BalanceCost, "金额与跳过预占时一致")
 			require.Equal(t, skippedCmd.OfficialCost, cmd.OfficialCost)
 		})
 	}
 }
 
-// 覆盖点 3：Gateway 余额不足仍被计费准入拒绝（含鉴权快照滞后的情况），与阈值开关无关。
+// 覆盖点 3：Gateway 余额不足仍被计费准入拒绝（含鉴权快照滞后的情况），与有没有特权无关。
 func TestLockFreeHandler_MessagesInsufficientBalanceStillRejectedByEligibility(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
@@ -608,9 +660,9 @@ func TestLockFreeHandler_MessagesInsufficientBalanceStillRejectedByEligibility(t
 		{"stale_high_snapshot_but_fresh_balance_exhausted", 991228, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			on := newLockFreeMessagesHarness(t, lockFreeScenario{threshold: lockFreeHandlerThreshold, snapshotBalance: tc.snapshotBalance, freshBalance: tc.freshBalance}, 0)
+			on := newLockFreeMessagesHarness(t, lockFreeScenario{privileged: true, snapshotBalance: tc.snapshotBalance, freshBalance: tc.freshBalance}, 0)
 			defer on.cleanup()
-			off := newLockFreeMessagesHarness(t, lockFreeScenario{threshold: 0, snapshotBalance: tc.snapshotBalance, freshBalance: tc.freshBalance}, 0)
+			off := newLockFreeMessagesHarness(t, lockFreeScenario{snapshotBalance: tc.snapshotBalance, freshBalance: tc.freshBalance}, 0)
 			defer off.cleanup()
 			recOn, recOff := on.serve(context.Background()), off.serve(context.Background())
 			require.Equal(t, http.StatusForbidden, recOn.Code, recOn.Body.String())
@@ -625,9 +677,9 @@ func TestLockFreeHandler_MessagesInsufficientBalanceStillRejectedByEligibility(t
 	}
 }
 
-// 覆盖点 2：Gateway failover 换号，无 lease 时只结算成功的账号一次。
+// 覆盖点 2：Gateway failover 换号，特权用户无 lease 时只结算成功的账号一次。
 func TestLockFreeHandler_MessagesFailoverWithoutLeaseSettlesWinnerOnce(t *testing.T) {
-	h := newLockFreeMessagesHarness(t, lockFreeScenario{threshold: lockFreeHandlerThreshold, snapshotBalance: 991228, freshBalance: 991228}, 1)
+	h := newLockFreeMessagesHarness(t, lockFreeScenario{privileged: true, snapshotBalance: 991228, freshBalance: 991228}, 1)
 	defer h.cleanup()
 	rec := h.serve(context.Background())
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -640,10 +692,10 @@ func TestLockFreeHandler_MessagesFailoverWithoutLeaseSettlesWinnerOnce(t *testin
 
 // 覆盖点 2：Gateway 客户端在上游处理期间取消，有/无 lease 的结算次数一致，无 lease 时预占 repo 零调用、不 panic。
 func TestLockFreeHandler_MessagesClientCancelMidRequestBehavesLikeLeasedRequest(t *testing.T) {
-	run := func(threshold float64) (int, *lockFreeMessagesHarness) {
+	run := func(privileged bool) (int, *lockFreeMessagesHarness) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		h := newLockFreeMessagesHarness(t, lockFreeScenario{threshold: threshold, snapshotBalance: 991228, freshBalance: 991228, onDo: cancel}, 0)
+		h := newLockFreeMessagesHarness(t, lockFreeScenario{privileged: privileged, snapshotBalance: 991228, freshBalance: 991228, onDo: cancel}, 0)
 		t.Cleanup(h.cleanup)
 		require.NotPanics(t, func() { h.serve(ctx) })
 		commands := 0
@@ -657,25 +709,29 @@ func TestLockFreeHandler_MessagesClientCancelMidRequestBehavesLikeLeasedRequest(
 			return commands, h
 		}
 	}
-	leasedCommands, leased := run(0)
-	skippedCommands, skipped := run(lockFreeHandlerThreshold)
+	leasedCommands, leased := run(false)
+	skippedCommands, skipped := run(true)
 	require.Equal(t, leasedCommands, skippedCommands)
 	require.LessOrEqual(t, skippedCommands, 1)
 	require.Equal(t, 1, leased.billing.counts().reserves)
 	require.Equal(t, lockFreeCounts{}, skipped.billing.counts())
 }
 
-// ---- 同一 HTTP 请求内两次尝试：第一次高余额跳过（无 lease），failover 第二次换了低余额 User 建 lease ----
+// ---- 同一 HTTP 请求内两次尝试：第一次特权用户跳过（无 lease），failover 第二次换了无特权 User 建 lease ----
 
-func newLockFreeInflightGateway(t *testing.T, threshold float64) (*service.OpenAIGatewayService, *lockFreeHandlerBillingRepo) {
+// lockFreeAttemptPrivilegedUserID 在特权名单里；其它用户（如 2）无特权。
+const lockFreeAttemptPrivilegedUserID = int64(1)
+
+func newLockFreeInflightGateway(t *testing.T) (*service.OpenAIGatewayService, *lockFreeHandlerBillingRepo) {
 	t.Helper()
-	cfg := lockFreeConfig(threshold)
+	cfg := lockFreeConfig()
 	billing := newLockFreeHandlerBillingRepo()
 	gateway := service.NewOpenAIGatewayService(
 		nil, nil, billing, nil, nil, nil, nil, cfg, nil, nil,
 		service.NewBillingService(cfg, nil), nil, &service.BillingCacheService{}, nil, &service.DeferredService{},
 		nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
+	gateway.SetBillingLockFreeUsers(newLockFreeHandlerResolver(t, lockFreeAttemptPrivilegedUserID))
 	return gateway, billing
 }
 
@@ -706,17 +762,17 @@ func TestLockFreeHandler_FailoverSkipThenLeasedAttemptIsReleasedExactlyOnce(t *t
 	}
 
 	t.Run("second_attempt_settles", func(t *testing.T) {
-		gateway, billing := newLockFreeInflightGateway(t, lockFreeHandlerThreshold)
+		gateway, billing := newLockFreeInflightGateway(t)
 		c := lockFreeNewGinContext()
 		defer finishBillingInflightHTTP(c) // 入口的 defer，HandlerDone 幂等
 
-		// 第一次尝试：高余额 -> 跳过，ctx 里没有 lease。
+		// 第一次尝试：特权用户 -> 跳过，ctx 里没有 lease。
 		require.True(t, reserveBillingInflightHTTP(c, gateway, lockFreeAttemptRequest(1, 991228, 11), nil, respond(t)))
 		require.Nil(t, service.BillingInflightLeaseFromContext(c.Request.Context()))
 		service.MarkBillingInflightAttemptNoCharge(c.Request.Context()) // 无 lease 时 no-op
 		require.Equal(t, lockFreeCounts{}, billing.counts())
 
-		// 第二次尝试：failover 后换成低余额用户 -> 建 lease 并放进请求 ctx。
+		// 第二次尝试：failover 后换成无特权用户 -> 建 lease 并放进请求 ctx。
 		require.True(t, reserveBillingInflightHTTP(c, gateway, lockFreeAttemptRequest(2, 100, 21), nil, respond(t)))
 		lease := service.BillingInflightLeaseFromContext(c.Request.Context())
 		require.NotNil(t, lease)
@@ -737,7 +793,7 @@ func TestLockFreeHandler_FailoverSkipThenLeasedAttemptIsReleasedExactlyOnce(t *t
 	})
 
 	t.Run("second_attempt_refused_with_no_charge_proof", func(t *testing.T) {
-		gateway, billing := newLockFreeInflightGateway(t, lockFreeHandlerThreshold)
+		gateway, billing := newLockFreeInflightGateway(t)
 		c := lockFreeNewGinContext()
 		require.True(t, reserveBillingInflightHTTP(c, gateway, lockFreeAttemptRequest(1, 991228, 11), nil, respond(t)))
 		require.Nil(t, service.BillingInflightLeaseFromContext(c.Request.Context()))
@@ -752,7 +808,7 @@ func TestLockFreeHandler_FailoverSkipThenLeasedAttemptIsReleasedExactlyOnce(t *t
 	})
 
 	t.Run("second_attempt_unknown_outcome_keeps_bounded_ttl_hold", func(t *testing.T) {
-		gateway, billing := newLockFreeInflightGateway(t, lockFreeHandlerThreshold)
+		gateway, billing := newLockFreeInflightGateway(t)
 		c := lockFreeNewGinContext()
 		require.True(t, reserveBillingInflightHTTP(c, gateway, lockFreeAttemptRequest(1, 991228, 11), nil, respond(t)))
 		require.True(t, reserveBillingInflightHTTP(c, gateway, lockFreeAttemptRequest(2, 100, 21), nil, respond(t)))
@@ -761,8 +817,8 @@ func TestLockFreeHandler_FailoverSkipThenLeasedAttemptIsReleasedExactlyOnce(t *t
 		require.Zero(t, billing.counts().releases, "已派发但结果未知：与改动前一致，保留到 TTL 而不是立即释放")
 	})
 
-	t.Run("reverse_order_leased_first_then_high_balance_attempt_reuses_lease", func(t *testing.T) {
-		gateway, billing := newLockFreeInflightGateway(t, lockFreeHandlerThreshold)
+	t.Run("reverse_order_leased_first_then_privileged_attempt_reuses_lease", func(t *testing.T) {
+		gateway, billing := newLockFreeInflightGateway(t)
 		c := lockFreeNewGinContext()
 		require.True(t, reserveBillingInflightHTTP(c, gateway, lockFreeAttemptRequest(2, 100, 11), nil, respond(t)))
 		first := service.BillingInflightLeaseFromContext(c.Request.Context())

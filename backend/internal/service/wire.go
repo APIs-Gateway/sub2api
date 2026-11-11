@@ -728,6 +728,7 @@ var ProviderSet = wire.NewSet(
 	ProvidePricingDerivationService,
 	NewPricingShadowRecorder,
 	ProvideStagedGroupPolicy,
+	ProvideBillingLockFreeUsers,
 	ProvidePricingWriteServices,
 	ProvidePricingStageService,
 	ProvidePricingStageSwitcher,

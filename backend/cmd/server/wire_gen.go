@@ -359,7 +359,9 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	authCacheInvalidationOutboxRepository := repository.NewAuthCacheInvalidationOutboxRepository(db)
 	authCacheInvalidationWorker := service.ProvideAuthCacheInvalidationWorker(authCacheInvalidationOutboxRepository, apiKeyCache, apiKeyService)
 	opsIngressRejectAggregator := service.ProvideOpsIngressRejectAggregator(opsRepository, opsService)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, claudeCodeVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, authCacheInvalidationWorker, opsIngressRejectAggregator, promptService, upstreamBillingProbeService, adminAuditWriter)
+	billingLockFreeUserLister := repository.NewBillingLockFreeUserLister(db)
+	billingLockFreeUsers := service.ProvideBillingLockFreeUsers(billingLockFreeUserLister, gatewayService, openAIGatewayService)
+	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, claudeCodeVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, authCacheInvalidationWorker, opsIngressRejectAggregator, promptService, upstreamBillingProbeService, adminAuditWriter, billingLockFreeUsers)
 	application := &Application{
 		Server:      httpServer,
 		PromptAudit: promptService,
@@ -425,6 +427,7 @@ func provideCleanup(
 	promptAudit *securityaudit.PromptService,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	adminAuditWriter *service.AdminAuditWriter,
+	billingLockFreeUsers *service.BillingLockFreeUsers,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -621,6 +624,11 @@ func provideCleanup(
 				if adminAuditWriter != nil {
 					adminAuditWriter.Stop(ctx)
 				}
+				return nil
+			}},
+			{"BillingLockFreeUsers", func() error {
+				// 停止特权名单的后台刷新，取消并等待进行中的刷新退出（nil 安全）。
+				billingLockFreeUsers.Close()
 				return nil
 			}},
 		}

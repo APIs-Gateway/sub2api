@@ -10,6 +10,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/shopspring/decimal"
 )
 
 type usageBillingRepository struct {
@@ -72,7 +73,14 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 	}
 
 	result := &service.UsageBillingApplyResult{Applied: true}
-	if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
+	effects := r.applyUsageBillingEffects
+	// 带 InflightObligationID 的命令一律走加锁结算：consumeBillingInflight 本来就会 FOR UPDATE users 行，
+	// 短持锁没有收益；也让「无价模型/估价失败」这类带预占的请求保持与上游原版逐句一致。
+	// 特权用户的有价请求不做在途预占，正常不带这个 ID。
+	if cmd.BillingLockFree && cmd.InflightObligationID == "" {
+		effects = r.applyUsageBillingEffectsLockFree
+	}
+	if err := effects(ctx, tx, cmd, result); err != nil {
 		return nil, err
 	}
 	if err := consumeBillingInflight(ctx, tx, cmd); err != nil {
@@ -157,6 +165,12 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		}
 	}
 
+	return applyUsageBillingNonWalletEffects(ctx, tx, cmd, result)
+}
+
+// applyUsageBillingNonWalletEffects 是结算里钱包/订阅以外的副作用：api key 额度、api key 限速、账号额度。
+// 加锁结算和短持锁结算共用，语句和顺序与拆分前完全一致。
+func applyUsageBillingNonWalletEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
 	// 已删除 Key 的额度/限速计数不再适用，但请求产生的消费仍需结算。
 	if cmd.APIKeyQuotaCost > 0 {
 		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, cmd.APIKeyQuotaCost)
@@ -181,6 +195,124 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	return nil
+}
+
+// applyUsageBillingEffectsLockFree 是 BillingLockFree 的短持锁结算。
+//
+// 目标：事务里不再有「SELECT users FOR UPDATE → 锁卡 → Go 端算 → 写卡 → 写 users」这一串往返，
+// 缩短热点 users 行（如 user 1）被持有的时间；全站请求都挂在同一个用户下时，一笔变慢后面全部排队。
+//
+// 语句顺序（与加锁结算的锁序 users → card → api_keys → accounts 完全一致，不会与它成环）：
+//  1. 无锁查用户有没有生效订阅卡（条件与 settleSubscriptionWindow 选卡一致：status='active' AND
+//     deleted_at IS NULL，不按 expires_at 过滤）。有卡 → 回到原加锁流程，一行不改。
+//  2. 无卡 → UPDATE users SET balance = balance - 扣款额 RETURNING balance。这是第一条锁行语句，
+//     用户不存在/已软删在这里直接返回 ErrUserNotFound，此时还没写任何东西。
+//  3. api_keys 额度、api_keys 限速、accounts 额度（与加锁结算同一份代码、同一顺序）。
+//  4. COMMIT（由 Apply 完成）。
+//
+// 为什么不需要 FOR UPDATE：SettleWindow 无卡分支的扣款额只取决于 cost×multiplier（见 settleWalletOnlyAtomic），
+// 与起始余额无关，所以钱包扣款是一条原子自减，PostgreSQL 的行锁保证并发自减不丢更新，不需要先读后写。
+// 附带好处：UPDATE 只改非键列，拿的是 FOR NO KEY UPDATE，不挡外键检查（FOR KEY SHARE，例如写 usage_logs）；
+// 原路径的 FOR UPDATE 会挡。
+//
+// 已知并接受的竞态：无锁查卡和扣款之间用户恰好买了卡，这一笔会从钱包扣（而不是先用订阅额度）。
+// 购买/续费本来就与进行中的请求并发，影响仅为这一笔的扣款来源，下一笔起走卡流程。
+//
+// 不设置 synchronous_commit：生产库已经全局 off，这里不再 SET LOCAL。
+func (r *usageBillingRepository) applyUsageBillingEffectsLockFree(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
+	officialCost, multiplier := usageBillingOfficialCost(cmd)
+	if officialCost <= 0 {
+		// 无扣费金额：加锁结算在这里也不碰 users/卡，只做其余副作用。
+		return applyUsageBillingNonWalletEffects(ctx, tx, cmd, result)
+	}
+
+	var hasCard bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM user_subscriptions
+			WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
+		)
+	`, cmd.UserID).Scan(&hasCard); err != nil {
+		return err
+	}
+	if hasCard {
+		return r.applyUsageBillingEffects(ctx, tx, cmd, result)
+	}
+
+	settleRes, err := settleWalletOnlyAtomic(ctx, tx, cmd.UserID, officialCost, multiplier)
+	if err != nil {
+		return err
+	}
+	result.NewBalance = &settleRes.newBalance
+	result.WalletDebit = &settleRes.walletDebit
+	result.OverdraftApplied = false
+	result.SubscriptionID = nil
+	result.DepletedSubscriptionGroupIDs = nil
+	return applyUsageBillingNonWalletEffects(ctx, tx, cmd, result)
+}
+
+// usageBillingOfficialCost 取结算输入：OfficialCost 为主，legacy/测试只传 BalanceCost 时回退（1:1 扣）；
+// 倍率 <=0 按 1。与 applyUsageBillingEffects 开头的取值一致。
+func usageBillingOfficialCost(cmd *service.UsageBillingCommand) (officialCost, multiplier float64) {
+	officialCost = cmd.OfficialCost
+	if officialCost <= 0 && cmd.BalanceCost > 0 {
+		officialCost = cmd.BalanceCost
+	}
+	multiplier = cmd.RateMultiplier
+	if multiplier <= 0 {
+		multiplier = 1
+	}
+	return officialCost, multiplier
+}
+
+// settleWalletOnlyAtomic 是 service.SettleWindow(nil, &wallet, cost, multiplier, now) 的原子等价实现。
+//
+// SettleWindow 无卡分支：charge = cost×multiplier；charge<=0 不动钱包；否则
+// 「钱包正余额先扣 min(charge, balance) → 剩余缺口记入负数」。两段相加恒等于 charge：
+//
+//	balance>0 且 charge<=balance： 扣 charge，余额 b-charge
+//	balance>0 且 charge> balance： 扣 balance 再记 charge-balance 的负数，余额 b-charge（可为负）
+//	balance<=0：                  整笔 charge 记负数，余额 b-charge
+//
+// 三种情形的最终余额都是 b-charge，扣款额都是 charge，与起始余额无关（浮点上 -(c-b) 与 b-c 逐位相同）。
+// 所以只需一条原子自减。扣款额先量化到 8 位（QuantizeUsageBillingAmount，half-away-from-zero，
+// 与 NUMERIC(20,8) 落库刻度一致），使 users.balance 的变化量恰好落在列刻度上。
+// 对 charge 量化后再减，与加锁路径「先在 Go 里算出 b-charge 再整体 SET、由 PG 舍入到 8 位」的结果只会在
+// 第 9 位恰好是 5 的平局上相差 1e-8（加锁路径此时取决于浮点噪声，本身就不确定）。
+//
+// 返回的 walletDebit 沿用原路径的计算：用 RETURNING 的新余额还原起始余额（新余额+量化扣款额，
+// 十进制精确运算，等于自减前读到的 balance），再调用 SettleWindow 取 balance-wallet.Balance，
+// 与加锁路径在同一起始余额下逐位相同。
+func settleWalletOnlyAtomic(ctx context.Context, tx *sql.Tx, userID int64, officialCost, multiplier float64) (*subSettleResult, error) {
+	delta := 0.0
+	if charge := officialCost * multiplier; charge > 0 {
+		delta = service.QuantizeUsageBillingAmount(charge)
+	}
+	var newBalanceText string
+	if err := tx.QueryRowContext(ctx, `
+		UPDATE users
+		SET balance = balance - $1, updated_at = NOW()
+		WHERE id = $2 AND deleted_at IS NULL
+		RETURNING balance::text
+	`, delta, userID).Scan(&newBalanceText); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrUserNotFound
+		}
+		return nil, err
+	}
+	newBalance, err := decimal.NewFromString(newBalanceText)
+	if err != nil {
+		return nil, err
+	}
+	prevBalance, _ := newBalance.Add(decimal.NewFromFloat(delta)).Float64()
+	wallet := service.WalletState{Balance: prevBalance}
+	service.SettleWindow(nil, &wallet, officialCost, multiplier, time.Now())
+
+	newBalanceF, _ := newBalance.Float64()
+	return &subSettleResult{
+		newBalance:  newBalanceF,
+		walletDebit: prevBalance - wallet.Balance,
+	}, nil
 }
 
 // subSettleResult 是三窗口订阅结算的落库结果（供上层重建旧余额、失效缓存）。

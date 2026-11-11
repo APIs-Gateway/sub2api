@@ -81,6 +81,7 @@ var ProviderSet = wire.NewSet(
 	NewAnnouncementReadRepository,
 	NewUsageLogRepository,
 	NewUsageBillingRepository,
+	NewBillingLockFreeUserLister, // 计费免锁特权名单的数据源（用户属性）
 	NewIdempotencyRepository,
 	NewAPIKeyGroupRouteRepository, // Key 级分组回退链
 	NewAPIKeyGroupRouteExtras,
