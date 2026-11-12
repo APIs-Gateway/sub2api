@@ -207,11 +207,7 @@ type chainRespOptions struct {
 	forced    []config.OpenAIForcedAccountRoute
 	// audit 非 nil 时启用提示词审计，值是审计范围里的分组 ID（命中则拦截）。
 	audit []int64
-	// stableStore / stableKey 用于旧「稳定优先」与回退链的共存测试（只覆盖 chat/completions）：
-	// stableKey 为 true 时 Key 开着稳定优先，stableStore 是（会记录调用的）稳定优先状态存储。
-	stableStore service.StablePriorityStateStore
-	stableKey   bool
-	// groupRepo 是网关服务用的分组仓储（旧稳定优先沿分组指针解析兜底档位时用）；maxSwitches > 0 时覆盖入口的单跳换号上限（默认 3）。
+	// groupRepo 是网关服务用的分组仓储；maxSwitches > 0 时覆盖入口的单跳换号上限（默认 3）。
 	groupRepo   service.GroupRepository
 	maxSwitches int
 }
@@ -309,7 +305,7 @@ func newChainRespHarness(t *testing.T, o chainRespOptions) *chainRespHarness {
 		billingCache,
 		hs.upstream,
 		&service.DeferredService{},
-		nil, nil, nil, nil, nil, nil, nil, o.stableStore, o.groupRepo,
+		nil, nil, nil, nil, nil, nil, nil,
 	)
 
 	h := NewOpenAIGatewayHandler(gateway, concurrency, billingCache, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
@@ -352,8 +348,6 @@ func newChainRespHarness(t *testing.T, o chainRespOptions) *chainRespHarness {
 		Group:          o.primary,
 		HasGroupRoutes: o.hasRoutes,
 		User:           &service.User{ID: chainRespUserID, Status: service.StatusActive, Balance: 100},
-
-		StablePriorityEnabled: o.stableKey,
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

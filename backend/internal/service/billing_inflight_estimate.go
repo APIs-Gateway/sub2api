@@ -22,7 +22,6 @@ type BillingInflightRequest struct {
 	Embeddings        bool
 	GeminiLongContext bool
 	ChannelUsageFields
-	StableDecision *OpenAIAccountScheduleDecision
 	// V2 passthrough returns the frozen first wire model, no UpstreamModel or
 	// ImageCount. Estimate that existing settlement shape while forwarding each
 	// later frame unchanged.
@@ -159,20 +158,6 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 	ctx = WithBillingNonSettlement(ctx)
 	ctx = pinGroupPolicySnapshots(ctx, s.groupPolicy())
 	key := request.APIKey
-	if d := request.StableDecision; d != nil && key.GroupID != nil && key.Group != nil && d.StableServedGroupID > 0 && d.StableServedGroupID != *key.GroupID && d.StableServedRateMultiplier > 0 {
-		group := *key.Group
-		group.ID = d.StableServedGroupID
-		group.RateMultiplier = d.StableServedRateMultiplier
-		group.ImageRateIndependent = d.StableServedImageRateIndependent
-		group.ImageRateMultiplier = d.StableServedImageRateMultiplier
-		group.ImagePrice1K = d.StableServedImagePrice1K
-		group.ImagePrice2K = d.StableServedImagePrice2K
-		group.ImagePrice4K = d.StableServedImagePrice4K
-		copyKey := *key
-		copyKey.Group = &group
-		copyKey.GroupID = &group.ID
-		key = &copyKey
-	}
 	multiplier := s.cfg.Default.RateMultiplier
 	if key.GroupID != nil && key.Group != nil {
 		multiplier = s.ResolveUserGroupRateMultiplier(ctx, key.User.ID, *key.GroupID, key.Group.RateMultiplier)

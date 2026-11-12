@@ -39,7 +39,7 @@ func newCodexModelsHandlerForTest(repo service.AccountRepository) *OpenAIGateway
 			repo,
 			nil, // grokTokenProvider
 			nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-			nil, nil, nil, nil, nil, nil, nil, nil, nil,
+			nil, nil, nil, nil, nil, nil, nil,
 		),
 	}
 }

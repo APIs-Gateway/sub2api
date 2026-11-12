@@ -255,8 +255,6 @@ func newKeepaliveMismatchHarnessWithInterval(t *testing.T, accounts []service.Ac
 		nil,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 	cache := &concurrencyCacheMock{

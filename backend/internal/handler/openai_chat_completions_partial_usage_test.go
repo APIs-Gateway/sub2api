@@ -230,7 +230,7 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 				&openAIWSUsageHandlerAccountRepoStub{account: account}, usageRepo,
 				billingRepo, userRepo, nil, nil, nil, cfg, nil, nil,
 				billingService, nil, billingCache, upstream,
-				&service.DeferredService{}, nil, nil, resolver, channelService, nil, nil, nil, nil, nil,
+				&service.DeferredService{}, nil, nil, resolver, channelService, nil, nil, nil,
 			)
 			cache := &concurrencyCacheMock{
 				acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },

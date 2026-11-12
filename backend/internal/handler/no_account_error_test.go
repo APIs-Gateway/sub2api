@@ -289,13 +289,3 @@ func TestResolveNoAccountError_UsesCurrentAPIKeyPlatformAfterFallback(t *testing
 	require.Len(t, fd.calls, 1)
 	require.Equal(t, service.PlatformAnthropic, fd.calls[0].Platform)
 }
-
-func TestOpenAIStablePriorityCanFallback(t *testing.T) {
-	fallbackGroupID := int64(9)
-	apiKey := &service.APIKey{Group: &service.Group{StablePriorityFallbackGroupID: &fallbackGroupID}}
-
-	require.True(t, openAIStablePriorityCanFallback(apiKey, service.StablePriorityIntent{Enabled: true}))
-	require.False(t, openAIStablePriorityCanFallback(apiKey, service.StablePriorityIntent{}))
-	require.False(t, openAIStablePriorityCanFallback(&service.APIKey{Group: &service.Group{}}, service.StablePriorityIntent{Enabled: true}))
-	require.False(t, openAIStablePriorityCanFallback(nil, service.StablePriorityIntent{Enabled: true}))
-}

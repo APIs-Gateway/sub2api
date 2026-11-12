@@ -67,7 +67,7 @@ func TestOpenAIResponsesWebSocket_PrewarmUsageHashesSurviveDelayedWorker(t *test
 		&openAIWSUsageHandlerAccountRepoStub{account: account}, usageRepo,
 		billingRepo, nil, nil, nil, nil, &billingCfg, nil, service.NewConcurrencyService(cache),
 		service.NewBillingService(&billingCfg, nil), nil, h.billingCacheService, nil, &service.DeferredService{},
-		nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil,
 	)
 	pool := newUsageRecordTestPool(t)
 	h.usageRecordWorkerPool = pool

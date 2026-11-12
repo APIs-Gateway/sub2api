@@ -186,37 +186,3 @@ func TestBillingInflight_NonFinitePriceCannotBypassUnknownExclusive(t *testing.T
 		lease.HandlerDone()
 	}
 }
-
-func TestBillingInflight_StableServedEstimateUsesEffectiveGroupWithoutMutatingKey(t *testing.T) {
-	cfg := inflightTestConfig()
-	zero, price := 0.0, 2.0
-	channels := newTestChannelServiceWithCache(t, &channelCache{
-		pricingByGroupModel: map[channelModelKey]*ChannelModelPricing{
-			{groupID: 1, model: "gpt-5"}: {BillingMode: BillingModePerRequest, PerRequestPrice: &zero},
-			{groupID: 2, model: "gpt-5"}: {BillingMode: BillingModePerRequest, PerRequestPrice: &price},
-		},
-		channelByGroupID:        map[int64]*Channel{1: {ID: 1, Status: StatusActive}, 2: {ID: 2, Status: StatusActive}},
-		groupPlatform:           map[int64]string{1: "", 2: ""},
-		wildcardByGroupPlatform: map[channelGroupPlatformKey][]*wildcardPricingEntry{}, mappingByGroupModel: map[channelModelKey]string{}, wildcardMappingByGP: map[channelGroupPlatformKey][]*wildcardMappingEntry{}, byID: map[int64]*Channel{},
-	})
-	repo := &inflightCaptureRepo{allow: true}
-	billing := NewBillingService(cfg, nil)
-	svc := &OpenAIGatewayService{cfg: cfg, usageBillingRepo: repo, billingService: billing, resolver: NewModelPricingResolver(channels, billing)}
-	groupID := int64(1)
-	key := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: &Group{ID: 1, RateMultiplier: 1}}
-	request := BillingInflightRequest{APIKey: key, Model: "gpt-5", Body: []byte(`{"model":"gpt-5","input":"hello"}`)}
-	lease, err := svc.ReserveBillingInflight(context.Background(), request)
-	require.NoError(t, err)
-	require.Nil(t, lease, "original free group needs no funding hold")
-	request.StableDecision = &OpenAIAccountScheduleDecision{StableServedGroupID: 2, StableServedRateMultiplier: 3, StableServedImageRateIndependent: true, StableServedImageRateMultiplier: 4, StableServedImagePrice1K: &price, StableServedImagePrice2K: &price, StableServedImagePrice4K: &price}
-	lease, err = svc.ReserveBillingInflight(context.Background(), request)
-	require.NoError(t, err)
-	require.NotNil(t, lease)
-	defer lease.HandlerDone()
-	require.InDelta(t, 6, repo.amount, 1e-8, "effective served group price and multiplier must match completion billing")
-	require.False(t, repo.exclusive)
-	require.Equal(t, int64(1), *key.GroupID)
-	require.Equal(t, int64(1), key.Group.ID)
-	require.Equal(t, 1.0, key.Group.RateMultiplier)
-	require.False(t, key.Group.ImageRateIndependent, "estimate must not mutate the authenticated key used by other requests")
-}

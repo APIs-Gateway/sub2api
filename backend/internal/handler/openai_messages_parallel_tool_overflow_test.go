@@ -63,7 +63,7 @@ func TestOpenAIMessagesParallelOverflowCyberBillsOnce(t *testing.T) {
 		&openAIWSUsageHandlerAccountRepoStub{account: account}, usageRepo,
 		billingRepo, userRepo, nil, nil, nil, cfg, nil, nil,
 		service.NewBillingService(cfg, nil), nil, billingCacheSvc, httpUpstream,
-		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
 	)
 	cache := &concurrencyCacheMock{
 		acquireUserSlotFn: func(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) { return true, nil },

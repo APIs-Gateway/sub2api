@@ -63,7 +63,7 @@ func newHopSlotEnv(t *testing.T, queueFull bool, acquireFn func(accountID int64)
 	cache := &hopSlotCache{concurrencyCacheMock: mock, queueFull: queueFull}
 	svc := service.NewOpenAIGatewayService(
 		hopSlotAccountRepo{}, nil, nil, nil, nil, nil, nil, &config.Config{}, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	h := &OpenAIGatewayHandler{
 		gatewayService:    svc,

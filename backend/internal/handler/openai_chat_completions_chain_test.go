@@ -64,42 +64,6 @@ func runChainChatCase(t *testing.T, o chainRespOptions, body string) (chainRespO
 	return out, hs
 }
 
-// chainChatStableStore 是旧「稳定优先」状态存储的假实现：只记录有没有被碰过。
-// 状态始终是 normal，所以即使被调用也不会真的把请求导到别的分组。
-type chainChatStableStore struct {
-	mu     sync.Mutex
-	gets   int
-	enters int
-}
-
-func (s *chainChatStableStore) Get(context.Context, int64) (service.StablePriorityState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.gets++
-	return service.StablePriorityState{Mode: service.StablePriorityModeNormal}, nil
-}
-
-func (s *chainChatStableStore) TryEnterFallback(context.Context, int64, int64) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.enters++
-	return true, nil
-}
-
-func (s *chainChatStableStore) ObserveHomeHealth(context.Context, int64, bool, int64) (int64, error) {
-	return 0, nil
-}
-
-func (s *chainChatStableStore) TryRevert(context.Context, int64, int64, int64, int64) (bool, error) {
-	return false, nil
-}
-
-func (s *chainChatStableStore) touched() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.gets + s.enters
-}
-
 // ---- 无链路径逐字节一致 ----
 
 func TestChatChain_GatedRequestsBehaveLikeLegacy(t *testing.T) {
@@ -173,50 +137,6 @@ func TestChatChain_LegacyPathServesFromPrimaryGroupOnly(t *testing.T) {
 	require.Contains(t, got.body, "served-by-11")
 	require.InDelta(t, 1.0, got.usage.RateMultiplier, 1e-12)
 	requireNoServedColumns(t, got.usage, 1)
-}
-
-// 旧「稳定优先」与回退链不叠加：链生效时每一跳都不碰稳定优先状态存储（调度器走原始选号）；
-// 链没生效（开关关闭）时旧机制照旧参与。删除旧机制属于 PR5。
-func TestChatChain_LegacyStablePriorityIsNotConsultedWhenTheChainRuns(t *testing.T) {
-	newOpts := func(store *chainChatStableStore) chainRespOptions {
-		o := chainRespBase()
-		fallbackID := int64(2)
-		o.primary.StablePriorityFallbackGroupID = &fallbackID
-		o.stableStore = store
-		o.stableKey = true
-		return o
-	}
-
-	t.Run("chain active: primary serves and the old mechanism is bypassed", func(t *testing.T) {
-		store := &chainChatStableStore{}
-		got, _ := runChainChatCase(t, newOpts(store), chainChatBodyJSON)
-		require.Equal(t, http.StatusOK, got.status)
-		require.Equal(t, []int64{11}, got.calls)
-		require.Zero(t, store.touched(), "有链：不读也不写稳定优先状态")
-	})
-
-	t.Run("chain active: fallback hop serves and the old mechanism is bypassed", func(t *testing.T) {
-		store := &chainChatStableStore{}
-		o := newOpts(store)
-		o.schedulable[1] = nil
-		got, _ := runChainChatCase(t, o, chainChatBodyJSON)
-		require.Equal(t, http.StatusOK, got.status)
-		require.Equal(t, []int64{21}, got.calls, "回退由链决定")
-		require.EqualValues(t, 2, *got.usage.ServedGroupID)
-		require.EqualValues(t, 1, *got.usage.GroupID)
-		require.Zero(t, store.touched(), "有链：每一跳都不参与旧机制，不会既按链又按分组指针回退")
-	})
-
-	t.Run("switch off: the old mechanism still runs", func(t *testing.T) {
-		store := &chainChatStableStore{}
-		o := newOpts(store)
-		o.switchOn = false
-		got, _ := runChainChatCase(t, o, chainChatBodyJSON)
-		require.Equal(t, http.StatusOK, got.status)
-		require.Equal(t, []int64{11}, got.calls)
-		require.Positive(t, store.touched(), "无链：稳定优先照旧参与")
-		requireNoServedColumns(t, got.usage, 1)
-	})
 }
 
 // ---- 兜底服务与 served 计费 ----

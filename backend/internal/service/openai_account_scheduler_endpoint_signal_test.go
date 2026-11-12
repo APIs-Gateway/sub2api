@@ -59,32 +59,3 @@ func TestSelectAccountWithSchedulerForCapabilityPropagatesUpstreamCostSignal(t *
 		})
 	}
 }
-
-func TestSelectAccountWithSchedulerStablePropagatesUpstreamCostSignal(t *testing.T) {
-	ctx := context.Background()
-	for _, useUpstreamTokenCost := range []bool{false, true} {
-		t.Run(map[bool]string{false: "disabled", true: "enabled"}[useUpstreamTokenCost], func(t *testing.T) {
-			capture := &captureOpenAIAccountScheduler{}
-			svc := newCaptureOpenAISchedulerService(capture)
-
-			_, _, err := svc.SelectAccountWithSchedulerStable(
-				ctx,
-				nil,
-				nil,
-				"",
-				"",
-				"gpt-5.6",
-				nil,
-				OpenAIUpstreamTransportAny,
-				OpenAIEndpointCapabilityChatCompletions,
-				false,
-				useUpstreamTokenCost,
-				StablePriorityIntent{},
-			)
-
-			require.NoError(t, err)
-			require.Len(t, capture.requests, 1)
-			require.Equal(t, useUpstreamTokenCost, capture.requests[0].UseUpstreamTokenCost)
-		})
-	}
-}

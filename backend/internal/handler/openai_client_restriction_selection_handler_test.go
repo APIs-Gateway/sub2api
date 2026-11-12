@@ -165,20 +165,12 @@ func TestClientRestrictedSelection_ForcedAccountIsNotReplaced(t *testing.T) {
 func TestClientRestrictedSelection_StableHomePolicyDoesNotEnterFallback(t *testing.T) {
 	o := chainRespBase()
 	o.noRuntime = true
-	o.stableKey = true
-	fallback := int64(2)
-	o.primary.StablePriorityFallbackGroupID = &fallback
-	store := &chainChatStableStore{}
-	o.stableStore = store
 	o.groupRepo = &chainChatGroupRepo{groups: map[int64]*service.Group{1: o.primary, 2: o.hops[1].Group}}
 	o.schedulable[1] = []service.Account{clientPolicyAccount(11, true)}
 	hs := newChainRespHarness(t, o)
 	rec := clientPolicyRequest(hs, "chat", "unofficial-original-client/1.0", nil)
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	require.Empty(t, hs.upstream.accountCalls())
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	require.Zero(t, store.enters, "client policy exclusion must not enter stable fallback state")
 }
 
 // These cases keep the actual chain runtime enabled. The local exclusion is
@@ -267,7 +259,7 @@ func TestClientRestrictedSelection_PostSelectionCancellation(t *testing.T) {
 						&openAIWSUsageHandlerUsageLogRepoStub{created: hs.usageLogs}, funding,
 						nil, nil, nil, nil, cfg, nil, concurrency, service.NewBillingService(cfg, nil),
 						nil, hs.handler.billingCacheService, hs.upstream, &service.DeferredService{},
-						nil, nil, nil, nil, nil, nil, nil, nil, nil,
+						nil, nil, nil, nil, nil, nil, nil,
 					)
 					hs.handler.gatewayService = gateway
 					hs.handler.concurrencyHelper = NewConcurrencyHelper(concurrency, SSEPingFormatNone, time.Second)
