@@ -18,6 +18,14 @@ describe("groupsMessagesDispatch", () => {
     });
   });
 
+  it("uses the routable Grok catalog model for Grok Messages dispatch", () => {
+    expect(createDefaultMessagesDispatchFormState("grok")).toMatchObject({
+      opus_mapped_model: "grok-4.3",
+      sonnet_mapped_model: "grok-4.3",
+      haiku_mapped_model: "grok-4.3",
+    });
+  });
+
   it("sanitizes exact model mapping rows when converting to config", () => {
     const config = messagesDispatchFormStateToConfig({
       allow_messages_dispatch: true,

@@ -180,6 +180,13 @@
                 data-test="name-ccswitch"
                 @click="openOnboarding(row, 'ccswitch')"
               >CC Switch</button>
+              <button
+                v-if="row.group?.platform === 'grok'"
+                type="button"
+                class="rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 dark:border-dark-600 dark:text-gray-200 dark:hover:bg-dark-800"
+                data-test="name-grok-templates"
+                @click="openGrokSetup(row)"
+              >{{ t('keys.grokSetupTemplates') }}</button>
             </div>
           </template>
 
@@ -444,6 +451,13 @@
                 >
                   CC Switch
                 </button>
+                <button
+                  v-if="row.group?.platform === 'grok'"
+                  type="button"
+                  class="rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 dark:border-dark-600 dark:text-gray-200 dark:hover:bg-dark-800"
+                  data-test="action-grok-templates"
+                  @click="openGrokSetup(row)"
+                >{{ t('keys.grokSetupTemplates') }}</button>
               </div>
               <div class="flex items-center gap-1 md:max-w-[15.5rem] md:flex-wrap md:gap-0">
                 <!-- Toggle Status Button -->
@@ -1102,6 +1116,15 @@
       @close="closeOnboarding"
     />
 
+    <UseKeyModal
+      :show="grokSetupKey !== null"
+      :api-key="grokSetupKey?.key || ''"
+      :base-url="apiBaseUrl"
+      :platform="grokSetupKey?.group?.platform || null"
+      :allow-messages-dispatch="grokSetupKey?.group?.allow_messages_dispatch === true"
+      @close="grokSetupKey = null"
+    />
+
     <KeyFallbackChainDrawer
       :show="showFallbackDrawer"
       :initial-key-id="fallbackDrawerKeyId"
@@ -1208,6 +1231,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import SearchInput from '@/components/common/SearchInput.vue'
 	import Icon from '@/components/icons/Icon.vue'
 import KeyOnboardingModal from '@/components/user/KeyOnboardingModal.vue'
+import UseKeyModal from '@/components/keys/UseKeyModal.vue'
 import KeyFallbackChainDrawer from '@/components/keys/KeyFallbackChainDrawer.vue'
 import { keyFallbackAPI } from '@/api/keyFallback'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
@@ -1421,6 +1445,10 @@ const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showColumnDropdown = ref(false)
 const showOnboardingModal = ref(false)
+const grokSetupKey = ref<ApiKey | null>(null)
+const openGrokSetup = (key: ApiKey) => {
+  if (key.group?.platform === 'grok') grokSetupKey.value = key
+}
 // 刚创建成功的密钥：非空时创建弹窗显示「密钥已创建」确认态
 const createdKey = ref<ApiKey | null>(null)
 const showFallbackDrawer = ref(false)
