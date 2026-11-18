@@ -34,7 +34,7 @@ func TestUpstreamModelMatches(t *testing.T) {
 		{"latest alias", "gpt-5.6-sol-latest", "gpt-5.6-sol-2026-09-01", true},
 		{"swapped family", "gpt-5.6-sol", "gpt-6-sol", false},
 		{"swapped tier", "gpt-5.6-sol", "gpt-5.6-luna", false},
-		{"non-date suffix", "gpt-5.6-sol", "gpt-5.6-sol-mini", false},
+		{"non-date suffix: got contains sent (substring rule, 2026-11-18)", "gpt-5.6-sol", "gpt-5.6-sol-mini", true},
 		{"empty sent never blocks", "", "gpt-6-sol", true},
 		{"provider prefix on sent", "openai/gpt-5.6-sol", "gpt-5.6-sol", true},
 		{"provider prefix on got", "gpt-5.6-sol", "openai/gpt-5.6-sol", true},
@@ -44,7 +44,7 @@ func TestUpstreamModelMatches(t *testing.T) {
 		{"codex alias reverse: upstream echoes suffix", "gpt-5.4", "gpt-5.4-high", true},
 		{"codex alias upgrade via table", "gpt-5.1", "gpt-5.4", true},
 		{"provider prefix does not hide swapped family", "openai/gpt-5.6-sol", "gpt-6-sol", false},
-		{"provider prefix does not hide non-date suffix", "gpt-5.6-sol", "anthropic/gpt-5.6-sol-mini", false},
+		{"provider prefix + non-date suffix: got contains sent (substring rule)", "gpt-5.6-sol", "anthropic/gpt-5.6-sol-mini", true},
 		{"route prefix on got", "glm-5.3-flash", "cn:glm-5.3-flash", true},
 		{"route prefix uppercase", "glm-5.3-flash", "CN:GLM-5.3-Flash", true},
 		{"route prefix on sent", "cn:glm-5.3-flash", "glm-5.3-flash", true},
@@ -53,9 +53,9 @@ func TestUpstreamModelMatches(t *testing.T) {
 		{"plain substitution", "deepseek-v4.1-flash", "grok-4.7", false},
 		{"route prefix + provider", "gpt-5.6-sol", "cn:openai/gpt-5.6-sol", true},
 		{"route prefix + date suffix", "glm-5.3-flash", "cn:glm-5.3-flash-2026-11-01", true},
-		{"invalid prefix with slash not stripped", "glm-5.3-flash", "a/b:glm-5.3-flash", false},
-		{"too long prefix not stripped", "glm-5.3-flash", "abcdefghijklmnopq:glm-5.3-flash", false},
-		{"only one prefix layer stripped", "glm-5.3-flash", "cn:us:glm-5.3-flash", false},
+		{"invalid prefix with slash: still matches via substring rule", "glm-5.3-flash", "a/b:glm-5.3-flash", true},
+		{"too long prefix: still matches via substring rule", "glm-5.3-flash", "abcdefghijklmnopq:glm-5.3-flash", true},
+		{"two prefix layers: still matches via substring rule", "glm-5.3-flash", "cn:us:glm-5.3-flash", true},
 		{"downgrade to mini is not an alias", "gpt-5.4", "gpt-5-mini", false},
 		{"downgrade to bare family is not an alias", "gpt-5.4", "gpt-5", false},
 		{"downgrade codex to older mini is not an alias", "gpt-5.3-codex", "gpt-5.1-codex-mini", false},
@@ -228,13 +228,13 @@ func TestCheckUpstreamModelMismatch_SetsBlockedOnlyWhenReturningFailover(t *test
 func TestCheckUpstreamModelMismatch_GrokObserveOnly(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	svc := &OpenAIGatewayService{cfg: &config.Config{}}
-	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformGrok}, "req", nil, "grok-4.3", "grok-4.3-fast", true, true, OpenAIUsage{})
+	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformGrok}, "req", nil, "grok-4.3", "grok-4.7", true, true, OpenAIUsage{})
 	require.Nil(t, err, "grok 不一致只打标不 failover")
 	mark := GetOpsUpstreamModelMismatch(c)
 	require.NotNil(t, mark)
 	require.False(t, mark.Blocked)
 	require.Equal(t, "grok-4.3", mark.SentModel)
-	require.Equal(t, "grok-4.3-fast", mark.ResponseModel)
+	require.Equal(t, "grok-4.7", mark.ResponseModel)
 }
 
 // 池模式账号（中转自身是一池多 key）：单个内部节点偷换模型不应立刻把整个凭证换掉并降权，
@@ -351,14 +351,143 @@ func TestUpstreamModelMatches_MMDDSuffixAndSymmetry(t *testing.T) {
 		{"mmdd sent->got", "gpt-4", "gpt-4-0613", true},
 		{"mmdd got->sent", "gpt-4-0613", "gpt-4", true},
 		{"compact date got->sent", "foo-20260901", "foo", true},
-		{"invalid mmdd month 20", "foo", "foo-2048", false},
-		{"invalid mmdd day 40", "foo", "foo-1340", false},
-		{"invalid mmdd 0000", "foo", "foo-0000", false},
+		{"invalid mmdd month 20: got contains sent (substring rule)", "foo", "foo-2048", true},
+		{"invalid mmdd day 40: got contains sent (substring rule)", "foo", "foo-1340", true},
+		{"invalid mmdd 0000: got contains sent (substring rule)", "foo", "foo-0000", true},
 		{"invalid mmdd reverse", "foo-2048", "foo", false},
 		{"different tier with mmdd", "deepseek-v4.1-flash", "deepseek-v4.1-pro-1017", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, upstreamModelMatches(tc.sent, tc.got))
+		})
+	}
+}
+
+// 2026-11-18 cxw：「deepseek-v4.1-flash-sg 这种情况就是含有子串就放过吧」。
+// got 包含 sent 即放行，只看这一个方向；其余规则不变。
+func TestUpstreamModelMatches_SubstringRule(t *testing.T) {
+	cases := []struct {
+		name, sent, got string
+		want            bool
+	}{
+		{"prod: a6api -sg suffix", "deepseek-v4.1-flash", "deepseek-v4.1-flash-sg", true},
+		{"prod: responses stream global: prefix + -sg", "deepseek-v4.1-flash", "global:deepseek-v4.1-flash-sg", true},
+		{"mixed case and whitespace", "DeepSeek-V4.1-Flash", "  Global:DEEPSEEK-v4.1-flash-SG ", true},
+		{"substitution grok", "deepseek-v4.1-flash", "grok-4.7", false},
+		{"substitution other tier", "deepseek-v4.1-flash", "deepseek-v4-pro", false},
+		{"reverse direction not allowed: sent contains got", "deepseek-v4.1-flash-sg", "deepseek-v4.1", false},
+		{"prefixed substitution still blocked", "deepseek-v4.1-flash", "global:grok-4.7", false},
+		// 归一化（剥路由前缀 / provider 前缀）之后的子串：生产里 sent 带前缀、got 带后缀的组合。
+		{"normalized: provider prefix on sent, -sg on got", "openai/gpt-5.6-sol", "gpt-5.6-sol-sg", true},
+		{"normalized: route prefixes on both, -sg on got", "cn:glm-5.3-flash", "us:glm-5.3-flash-sg", true},
+		{"normalized: route prefix on sent, -sg on got", "global:deepseek-v4.1-flash", "deepseek-v4.1-flash-sg", true},
+		{"normalized: provider prefix on both", "openai/gpt-5.6-sol", "anthropic/gpt-5.6-sol-sg", true},
+		{"normalized: reverse still blocked (provider prefix)", "openai/gpt-5.6-sol-sg", "gpt-5.6-sol", false},
+		{"normalized: reverse still blocked (route prefix)", "cn:glm-5.3-flash-sg", "us:glm-5.3-flash", false},
+		{"normalized: prefixes do not hide substitution", "openai/gpt-5.6-sol", "us:grok-4.7-sg", false},
+		{"empty sent keeps old behavior (pass)", "", "grok-4.7", true},
+		{"whitespace-only sent keeps old behavior (pass)", "   ", "grok-4.7", true},
+		{"empty got keeps old behavior (pass)", "deepseek-v4.1-flash", "", true},
+		{"both empty", "", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, upstreamModelMatches(tc.sent, tc.got))
+		})
+	}
+}
+
+// 子串放行后 checkUpstreamModelMismatch 不再拦截 / 打标；真偷换仍然 failover。
+func TestCheckUpstreamModelMismatch_SubstringPassesThrough(t *testing.T) {
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	account := &Account{ID: 7, Type: AccountTypeAPIKey, Platform: PlatformOpenAI, Credentials: map[string]any{"pool_mode": true}}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	err := svc.checkUpstreamModelMismatch(c, account, "req", nil, "deepseek-v4.1-flash", "global:deepseek-v4.1-flash-sg", true, true, OpenAIUsage{})
+	require.Nil(t, err)
+	require.Nil(t, GetOpsUpstreamModelMismatch(c), "子串放行不应打标")
+
+	c2, _ := gin.CreateTestContext(httptest.NewRecorder())
+	err = svc.checkUpstreamModelMismatch(c2, account, "req", nil, "deepseek-v4.1-flash", "deepseek-v4-pro", true, true, OpenAIUsage{})
+	require.NotNil(t, err, "真偷换仍须拦截")
+	mark := GetOpsUpstreamModelMismatch(c2)
+	require.NotNil(t, mark)
+	require.True(t, mark.Blocked)
+}
+
+func TestNormalizeUpstreamModelSegment(t *testing.T) {
+	require.Equal(t, "gpt-5.6-sol", normalizeUpstreamModelSegment("openai/gpt-5.6-sol"))
+	require.Equal(t, "glm-5.3-flash", normalizeUpstreamModelSegment("cn:glm-5.3-flash"))
+	require.Equal(t, "glm-5.3-flash", normalizeUpstreamModelSegment("cn:openai/glm-5.3-flash"))
+	require.Equal(t, "glm-5.3-flash", normalizeUpstreamModelSegment("openai/cn:glm-5.3-flash"))
+	require.Equal(t, "", normalizeUpstreamModelSegment("openai/"), "空片段必须返回空，调用方据此不放行")
+	require.Equal(t, "cn:", normalizeUpstreamModelSegment("cn:"), "前缀后无内容时不剥")
+}
+
+// 规则 2–6（upstreamModelMatchesCore）的独立回归：入参已小写去空白，绕开最前面的子串规则，
+// 这些规则被改坏时下面的用例会失败。
+func TestUpstreamModelMatchesCore(t *testing.T) {
+	cases := []struct {
+		name, sent, got string
+		want            bool
+	}{
+		{"rule2 date snapshot dashed", "gpt-5.6-sol", "gpt-5.6-sol-2026-09-01", true},
+		{"rule2 date snapshot compact", "gpt-5.6-sol", "gpt-5.6-sol-20260901", true},
+		{"rule2 mmdd sent->got", "gpt-4", "gpt-4-0613", true},
+		{"rule2 reverse: sent snapshot, got base", "gpt-4-0613", "gpt-4", true},
+		{"rule2 reverse compact", "foo-20260901", "foo", true},
+		{"rule2 invalid mmdd reverse is not a snapshot", "foo-2048", "foo", false},
+		{"rule2 latest alias", "gpt-5.6-sol-latest", "gpt-5.6-sol-2026-09-01", true},
+		{"rule3 provider prefix on sent", "openai/gpt-5.6-sol", "gpt-5.6-sol", true},
+		{"rule3 provider prefix on got", "gpt-5.6-sol", "openai/gpt-5.6-sol", true},
+		{"rule3 provider prefix + latest", "openai/gpt-5.6-sol-latest", "gpt-5.6-sol-2026-09-01", true},
+		{"rule3 provider prefix does not hide swapped family", "openai/gpt-5.6-sol", "gpt-6-sol", false},
+		{"rule4 codex alias bare version", "gpt-5.3", "gpt-5.3-codex", true},
+		{"rule4 codex alias upgrade via table", "gpt-5.1", "gpt-5.4", true},
+		{"rule4 reverse is downgrade, not alias", "gpt-5.4", "gpt-5.1", false},
+		{"rule5 reasoning suffix on sent", "gpt-5.4-high", "gpt-5.4", true},
+		{"rule5 reasoning suffix on got", "gpt-5.4", "gpt-5.4-high", true},
+		{"rule5 mini is a different family", "gpt-5.4", "gpt-5-mini", false},
+		{"rule6 auto-review sent passes anything", "codex-auto-review", "gpt-5.6-terra", true},
+		{"rule6 auto-review sent with provider prefix", "openai/codex-auto-review", "gpt-5.4", true},
+		{"rule6 auto-review got is substitution", "gpt-5.6-luna", "codex-auto-review", false},
+		{"plain substitution", "deepseek-v4.1-flash", "grok-4.7", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, upstreamModelMatchesCore(tc.sent, tc.got))
+		})
+	}
+}
+
+// 规则 2–7 经 upstreamModelMatches 走完整路径时的回归：每条用例 sent 与 got 互不为子串
+// （原始串与归一化后都不是），子串规则吃不到，只能靠旧规则判定；
+// 循环里的前置断言保证以后新增用例不会被子串规则悄悄盖住。
+func TestUpstreamModelMatches_LegacyRulesWithoutSubstring(t *testing.T) {
+	cases := []struct {
+		name, sent, got string
+		want            bool
+	}{
+		{"rule2 snapshot mmdd: sent snapshot, got base", "gpt-4-0613", "gpt-4", true},
+		{"rule2 snapshot dashed: sent snapshot, got base", "gpt-4o-2024-08-06", "gpt-4o", true},
+		{"rule2 latest alias", "gpt-5.6-sol-latest", "gpt-5.6-sol-2026-09-01", true},
+		{"rule3 provider prefix + latest alias", "openai/gpt-5.6-sol-latest", "gpt-5.6-sol-2026-09-01", true},
+		{"rule4 codex alias upgrade", "gpt-5.1", "gpt-5.4", true},
+		{"rule5 reasoning suffix on sent", "gpt-5.4-high", "gpt-5.4", true},
+		{"rule6 auto-review requested", "openai/codex-auto-review", "gpt-5.4", true},
+		{"rule7 route prefix + reasoning suffix on sent", "cn:gpt-5.4-high", "gpt-5.4", true},
+		{"rule7 route prefix + snapshot on sent", "cn:glm-5.3-flash-1017", "glm-5.3-flash", true},
+		{"rule7 route prefixes both sides + codex alias", "cn:gpt-5.1", "us:gpt-5.4", true},
+		{"rule7 route prefix does not hide substitution", "cn:gpt-5.4", "us:gpt-5-mini", false},
+		{"rule2 reverse invalid mmdd stays blocked", "foo-2048", "foo", false},
+		{"rule4 reverse downgrade stays blocked", "gpt-5.4", "gpt-5.1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sent, got := strings.ToLower(strings.TrimSpace(tc.sent)), strings.ToLower(strings.TrimSpace(tc.got))
+			require.False(t, strings.Contains(got, sent), "用例被原始子串规则盖住")
+			require.False(t, strings.Contains(normalizeUpstreamModelSegment(got), normalizeUpstreamModelSegment(sent)), "用例被归一化子串规则盖住")
 			require.Equal(t, tc.want, upstreamModelMatches(tc.sent, tc.got))
 		})
 	}
