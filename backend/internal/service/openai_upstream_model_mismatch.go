@@ -61,7 +61,10 @@ const UpstreamModelMismatchClientMessage = "Service temporarily unavailable, ple
 
 var upstreamModelDateSuffixRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8}|(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01]))$`)
 
-// upstreamModelMatches 判断上游返回的 got 是否可视为与发送的 sent 一致。豁免规则依次为：
+// upstreamModelMatches 判断上游返回的 got 是否可视为与发送的 sent 一致。
+// 实际执行顺序：先做规则 1 的空值 / 归一化，紧接着是规则 8（子串，对原始串）——它最先放行；
+// 然后是规则 2–6（upstreamModelMatchesCore）；再是规则 7（剥路由前缀后重跑 2–6）；
+// 最后规则 8 在剥完路由 / provider 前缀的片段上再判一次。下面按编号列出各规则，编号不代表执行先后：
 //  1. 忽略大小写与首尾空白；任一为空放行。
 //  2. got == sent + "-" + 日期快照（YYYY-MM-DD / YYYYMMDD）；sent 以 -latest 结尾且 got 以其前缀开头。
 //  3. provider 前缀容忍：去掉 "provider/" 前缀后（lastOpenAIModelSegment）再做 1、2 的比对，
@@ -70,19 +73,35 @@ var upstreamModelDateSuffixRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8}|(0
 //     （gpt-5.3 → gpt-5.3-codex、gpt-5.1 → gpt-5.4）放行；反向（sent 是目标、got 是别名）不放行，
 //     否则 gpt-5.4 被偷换成 gpt-5-mini / gpt-5 这类降级会漏拦。
 //  5. 同族 reasoning / 日期后缀剥离：任一方去掉已知后缀（codexVersionModelPrefixes + isKnownCodexModelSuffix）
-//     后等于另一方放行（gpt-5.4-high ↔ gpt-5.4）。不用任何 Contains 启发式。
+//     后等于另一方放行（gpt-5.4-high ↔ gpt-5.4）。
 //  6. Codex 自动路由：sent（去 provider 前缀）在 upstreamAutoRoutedModels 里一律放行；got 是它不放行。
 //  7. 路由 / 区域前缀容忍：号池类上游按区域节点回显 "cn:glm-5.3-flash" 这种 "<前缀>:<模型>"。
 //     任一方形如 "<前缀>:<rest>"（前缀 upstreamModelRoutePrefixRe：不含 "/" 与 ":" 的 1–16 位短标识）
 //     时，只剥第一个、只剥一层 "<前缀>:"，再按 1–6 严格比对；剥完仍不同照拦
-//     （cn:grok-4.7 对 deepseek-v4.1-flash 仍是不一致）。不用任何 Contains 启发式。
+//     （cn:grok-4.7 对 deepseek-v4.1-flash 仍是不一致）。
+//  8. 子串放行（2026-11-18 按 cxw 要求放宽，此前明确不用 Contains 启发式）：got 包含 sent 即放行，
+//     方向只看 got ⊇ sent，不做反向。上游号池常给模型名加区域 / 线路后缀或前缀，规则 1–7 列不全，
+//     例如 a6api 对请求 deepseek-v4.1-flash 回显 deepseek-v4.1-flash-sg（Responses 流式为
+//     global:deepseek-v4.1-flash-sg）。代价：gpt-5.6-sol 回显 gpt-5.6-sol-mini 这类
+//     「sent 是 got 的前缀 / 子串」的偷换也会被放行；got 不包含 sent 的偷换（grok-4.7、
+//     deepseek-v4-pro、降级到更短的名字）仍照拦。
+//     子串判断做两遍：一遍在归一化后的原始串上；一遍在剥掉路由前缀（"xx:"）、provider 前缀
+//     （"openai/"，lastOpenAIModelSegment）之后的片段上（sent=cn:glm-5.3-flash、got=us:glm-5.3-flash-sg
+//     剥后 glm-5.3-flash ⊆ glm-5.3-flash-sg）。剥完的 sent 片段为空不放行。
 func upstreamModelMatches(sent, got string) bool {
 	sent = strings.ToLower(strings.TrimSpace(sent))
 	got = strings.ToLower(strings.TrimSpace(got))
 	if sent == "" || got == "" {
 		return true
 	}
+	if strings.Contains(got, sent) {
+		return true
+	}
 	if upstreamModelMatchesCore(sent, got) {
+		return true
+	}
+	// 规则 8 的归一化版本：剥前缀后 got 片段包含 sent 片段（sent 片段非空）。
+	if sentSeg := normalizeUpstreamModelSegment(sent); sentSeg != "" && strings.Contains(normalizeUpstreamModelSegment(got), sentSeg) {
 		return true
 	}
 	strippedSent, sentCut := stripUpstreamModelRoutePrefix(sent)
@@ -91,6 +110,14 @@ func upstreamModelMatches(sent, got string) bool {
 		return false
 	}
 	return upstreamModelMatchesCore(strippedSent, strippedGot)
+}
+
+// normalizeUpstreamModelSegment 剥掉 provider 前缀（取最后一个 "/" 之后）和一层路由前缀（"<前缀>:"），
+// 入参已小写去空白；结果可能为空（如 "openai/"），调用方须自己判空。
+func normalizeUpstreamModelSegment(model string) string {
+	seg := lastOpenAIModelSegment(model)
+	seg, _ = stripUpstreamModelRoutePrefix(seg)
+	return strings.TrimSpace(seg)
 }
 
 // upstreamModelRoutePrefixRe：路由 / 区域前缀的合法形态（入参已小写）。
