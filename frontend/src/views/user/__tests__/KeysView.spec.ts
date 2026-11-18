@@ -179,6 +179,34 @@ const createApiKey = (): ApiKey => ({
   reset_7d_at: null,
 })
 
+const createSetupGroup = (platform: Group['platform'], allowMessagesDispatch: boolean): Group => ({
+  id: 9,
+  name: platform,
+  description: null,
+  platform,
+  rate_multiplier: 1,
+  is_exclusive: false,
+  status: 'active',
+  subscription_type: 'standard',
+  daily_limit_usd: null,
+  weekly_limit_usd: null,
+  monthly_limit_usd: null,
+  allow_image_generation: false,
+  image_rate_independent: false,
+  image_rate_multiplier: 1,
+  image_price_1k: null,
+  image_price_2k: null,
+  image_price_4k: null,
+  claude_code_only: false,
+  fallback_group_id: null,
+  fallback_group_id_on_invalid_request: null,
+  allow_messages_dispatch: allowMessagesDispatch,
+  require_oauth_only: false,
+  require_privacy_set: false,
+  created_at: '2026-06-27T00:00:00Z',
+  updated_at: '2026-06-27T00:00:00Z',
+})
+
 const DataTableStub = {
   props: ['columns', 'data'],
   template: `
@@ -214,6 +242,11 @@ const mountView = async (table: object = DataTableStub) => {
         SearchInput: true,
         Icon: { template: '<span />' },
         KeyOnboardingModal: true,
+        UseKeyModal: {
+          name: 'UseKeyModal',
+          props: ['show', 'apiKey', 'baseUrl', 'platform', 'allowMessagesDispatch'],
+          template: '<div data-test="grok-template-modal" />',
+        },
         EndpointPopover: true,
         GroupBadge: true,
         GroupOptionItem: true,
@@ -599,6 +632,51 @@ describe('user KeysView overview and connect actions', () => {
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
     isCurrentStep.mockReturnValue(false)
+  })
+
+  it.each(['openai', 'anthropic', 'gemini', 'antigravity', 'grok'] as const)('retains rich install and CC Switch entry props for %s keys', async (platform) => {
+    const key: ApiKey = { ...keyA, group: createSetupGroup(platform, true) }
+    listKeys.mockResolvedValueOnce({ items: [key], total: 1, page: 1, page_size: 20, pages: 1 })
+    const endpoints = [{ name: 'Alternate', url: 'https://alternate.example' }]
+    getPublicSettings.mockResolvedValue({ api_base_url: 'https://gateway.example', custom_endpoints: endpoints, site_name: 'Configured Portal', doc_url: 'https://docs.example' })
+    const wrapper = await mountView(RowsTableStub)
+    await wrapper.get('[data-test="action-connect"]').trigger('click')
+    const rich = wrapper.getComponent({ name: 'KeyOnboardingModal' })
+    expect(rich.props()).toMatchObject({ show: true, apiKey: key, initialTab: 'install', baseUrl: 'https://gateway.example', customEndpoints: endpoints, siteName: 'Configured Portal', docUrl: 'https://docs.example' })
+    expect(wrapper.getComponent({ name: 'UseKeyModal' }).props('show')).toBe(false)
+    rich.vm.$emit('close')
+    await nextTick()
+    await wrapper.get('[data-test="action-ccswitch"]').trigger('click')
+    expect(rich.props('initialTab')).toBe('ccswitch')
+    expect(rich.props('apiKey')).toEqual(key)
+    expect(wrapper.find('[data-test="action-grok-templates"]').exists()).toBe(platform === 'grok')
+    wrapper.unmount()
+  })
+
+  it.each([
+    { entry: 'action', allowMessagesDispatch: false },
+    { entry: 'action', allowMessagesDispatch: true },
+    { entry: 'name', allowMessagesDispatch: false },
+    { entry: 'name', allowMessagesDispatch: true },
+  ])('opens Grok templates from $entry separately with Messages capability $allowMessagesDispatch and clears selection on close', async ({ entry, allowMessagesDispatch }) => {
+    const key: ApiKey = { ...keyA, group: createSetupGroup('grok', allowMessagesDispatch) }
+    listKeys.mockResolvedValueOnce({ items: [key], total: 1, page: 1, page_size: 20, pages: 1 })
+    getPublicSettings.mockResolvedValue({ api_base_url: 'https://gateway.example' })
+    const wrapper = await mountView({
+      props: ['columns', 'data'],
+      template: '<div><div v-for="row in data" :key="row.id"><slot name="cell-name" :row="row" /><slot name="cell-actions" :row="row" /></div></div>',
+    })
+    await wrapper.get(`[data-test="${entry}-grok-templates"]`).trigger('click')
+    const templates = wrapper.getComponent({ name: 'UseKeyModal' })
+    expect(templates.props()).toMatchObject({ show: true, apiKey: key.key, platform: 'grok', allowMessagesDispatch, baseUrl: 'https://gateway.example' })
+    expect(wrapper.getComponent({ name: 'KeyOnboardingModal' }).props('show')).toBe(false)
+    templates.vm.$emit('close')
+    await nextTick()
+    expect(templates.props()).toMatchObject({ show: false, apiKey: '', platform: null, allowMessagesDispatch: false })
+    await wrapper.get('[data-test="action-ccswitch"]').trigger('click')
+    expect(wrapper.getComponent({ name: 'KeyOnboardingModal' }).props('initialTab')).toBe('ccswitch')
+    expect(templates.props('show')).toBe(false)
+    wrapper.unmount()
   })
 
   it('概览：已启用数、近 30 天消费合计、接入地址', async () => {

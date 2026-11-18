@@ -5,6 +5,7 @@ import { createI18n } from "vue-i18n";
 import { resetFiatDataMissingForTest, useCurrencyDisplay } from "@/composables/useCurrencyDisplay";
 import { useAppStore } from "@/stores/app";
 import SubscriptionPlanCard from "../SubscriptionPlanCard.vue";
+import type { SubscriptionPlan } from "@/types/payment";
 
 const i18n = createI18n({
   legacy: false,
@@ -27,7 +28,7 @@ const i18n = createI18n({
   },
 });
 
-const mountPlanCard = (groupPlatform: string) =>
+const mountPlanCard = (groupPlatform: string, overrides: Partial<SubscriptionPlan> = {}) =>
   mount(SubscriptionPlanCard, {
     props: {
       plan: {
@@ -43,6 +44,7 @@ const mountPlanCard = (groupPlatform: string) =>
         validity_unit: "day",
         supported_model_scopes: ["claude", "gemini_text", "gemini_image"],
         is_active: true,
+        ...overrides,
       },
     },
     global: { plugins: [i18n] },
@@ -72,12 +74,28 @@ describe("SubscriptionPlanCard", () => {
     expect(wrapper.text()).toContain("USD")
   })
 
-  it("does not show Antigravity model scopes for OpenAI plans", () => {
-    const text = mountPlanCard("openai").text();
+  it.each(['openai', 'gemini', 'grok', 'anthropic'])("shows server model scopes for %s plans", (platform) => {
+    const text = mountPlanCard(platform).text();
+    expect(text).toContain("Claude");
+    expect(text).toContain("Gemini");
+    expect(text).toContain("Imagen");
+  });
 
-    expect(text).not.toContain("Claude");
-    expect(text).not.toContain("Gemini");
-    expect(text).not.toContain("Imagen");
+  it.each([
+    { name: 'missing', scopes: undefined },
+    { name: 'empty', scopes: [] },
+  ])('uses the platform label for $name server model scopes', ({ scopes }) => {
+    const text = mountPlanCard('openai', { supported_model_scopes: scopes }).text();
+    expect(text).toContain('OpenAI');
+    expect(text).not.toContain('Claude');
+    expect(text).not.toContain('Gemini');
+    expect(text).not.toContain('Imagen');
+  });
+
+  it('preserves an unrecognized server model scope label', () => {
+    const text = mountPlanCard('openai', { supported_model_scopes: ['custom-capability'] }).text();
+    expect(text).toContain('custom-capability');
+    expect(text).not.toContain('Claude');
   });
 
   it("shows model scopes for Antigravity plans", () => {

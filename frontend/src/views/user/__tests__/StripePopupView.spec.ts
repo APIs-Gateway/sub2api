@@ -1,3 +1,4 @@
+import { nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
@@ -140,10 +141,11 @@ describe('StripePopupView', () => {
     expect(closeWindow).not.toHaveBeenCalled()
   })
 
-  it('shows an initialization timeout when the opener never sends Stripe details', () => {
+  it('shows an initialization timeout when the opener never sends Stripe details', async () => {
     const wrapper = mount(StripePopupView)
 
     vi.advanceTimersByTime(15000)
+    await nextTick()
 
     expect(wrapper.text()).toContain('payment.stripePopup.timeout')
     wrapper.unmount()
@@ -217,14 +219,14 @@ describe('StripePopupView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('payment.result.success')
-    vi.advanceTimersByTime(3000)
-    await flushPromises()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-
     vi.advanceTimersByTime(1999)
     expect(closeWindow).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1)
     expect(closeWindow).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(3000)
+    await flushPromises()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 })

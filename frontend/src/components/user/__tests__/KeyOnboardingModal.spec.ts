@@ -877,8 +877,30 @@ describe('KeyOnboardingModal', () => {
       const w = await mountModal({ initialTab: 'ccswitch' })
       expect(w.findAll('[data-test="ccs-model"] option')).toHaveLength(1)
       expect(w.get('[data-test="ccs-model"]').attributes('disabled')).toBeDefined()
-      expect(w.get('[data-test="ccs-models-hint"]').text()).toContain('No models are available for this key')
+      expect(w.get('[data-test="ccs-models-error"]').text()).toContain('Could not load models. You can still import and leave the fields blank.')
+      expect(w.find('[data-test="ccs-models-hint"]').exists()).toBe(false)
       expect(w.get('[data-test="ccs-open"]').attributes('disabled')).toBeUndefined()
+      expect(w.get('[data-test="ccs-copy-link"]').attributes('disabled')).toBeUndefined()
+
+      getAvailable.mockResolvedValue(channels)
+      await w.get('[data-test="ccs-models-retry"]').trigger('click')
+      await flushPromises()
+      expect(getAvailable).toHaveBeenCalledTimes(2)
+      expect(w.find('[data-test="ccs-models-error"]').exists()).toBe(false)
+      expect((w.get('[data-test="ccs-model"]').element as HTMLSelectElement).value).toBe('gpt-5.6-sol')
+      expect(w.get('[data-test="ccs-model"]').attributes('disabled')).toBeUndefined()
+    })
+
+    it('模型列表正常返回空值时：提示没有可选模型，仍然可以留空导入', async () => {
+      getAvailable.mockResolvedValue([])
+      const w = await mountModal({ initialTab: 'ccswitch' })
+      expect(w.findAll('[data-test="ccs-model"] option')).toHaveLength(1)
+      expect(w.get('[data-test="ccs-model"]').attributes('disabled')).toBeDefined()
+      expect(w.get('[data-test="ccs-models-hint"]').text()).toContain('No models are available for this key')
+      expect(w.find('[data-test="ccs-models-error"]').exists()).toBe(false)
+      expect(w.find('[data-test="ccs-models-retry"]').exists()).toBe(false)
+      expect(w.get('[data-test="ccs-open"]').attributes('disabled')).toBeUndefined()
+      expect(w.get('[data-test="ccs-copy-link"]').attributes('disabled')).toBeUndefined()
     })
 
     it('antigravity 分组可以选 Claude 或 Gemini', async () => {
