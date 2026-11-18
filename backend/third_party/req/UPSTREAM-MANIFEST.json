@@ -1,0 +1,3341 @@
+{
+  "module": "github.com/imroc/req/v3",
+  "version": "v3.57.0",
+  "source": "https://proxy.golang.org/github.com/imroc/req/v3/@v/v3.57.0.zip",
+  "archiveSHA256": "7551b781c424d09cbd5823a0d5f9ff7dc5002aadd9ed226a776aa7150a2d186c",
+  "originalFileCount": 132,
+  "originalUncompressedBytes": 1109806,
+  "originalFiles": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "size": 613,
+      "sha256": "5890feebd186f85f250e3385feab488edd631bca526c4ccc7278f76392516574"
+    },
+    {
+      "path": ".gitignore",
+      "size": 289,
+      "sha256": "63d58850b9bb85c40f87041277ecef9d8f25446f9f5264870cd4d76ecbd2a6ed"
+    },
+    {
+      "path": ".testdata/sample-client-key.pem",
+      "size": 1679,
+      "sha256": "b7d11422c205b5ba79318f9766ea947ff28d6b64874f2129b8ebb585b00709f5"
+    },
+    {
+      "path": ".testdata/sample-client.pem",
+      "size": 1371,
+      "sha256": "5f5e040cd86709d2c01088be80a96090587eec9d432b97c5011fc992486d4a72"
+    },
+    {
+      "path": ".testdata/sample-file.txt",
+      "size": 61,
+      "sha256": "be83d6a817a83784f94958c8c0f007cc3a8d420f4b16fb4c633f2e1659fd6d7a"
+    },
+    {
+      "path": ".testdata/sample-gbk.html",
+      "size": 7051,
+      "sha256": "9a48ff37284e2945ee682338a94375c1d60f3cf5a4beb06286794d32104dd87c"
+    },
+    {
+      "path": ".testdata/sample-image.png",
+      "size": 199703,
+      "sha256": "627021f26b4e96e33db036e7ce1e4c661d92c9f4913017bdd0e3383292c11810"
+    },
+    {
+      "path": ".testdata/sample-root.pem",
+      "size": 1281,
+      "sha256": "2b0fa0f11c9bfec9a7be3f84183602f4fa75da78f917d20d660d42995a4c9bfe"
+    },
+    {
+      "path": ".testdata/sample-server-key.pem",
+      "size": 1675,
+      "sha256": "5a5b805b9b578f4c86c1067bb1a4dab2069e1b03b3cb63f00b479d81d1684c08"
+    },
+    {
+      "path": ".testdata/sample-server.pem",
+      "size": 1415,
+      "sha256": "fe63b4d0d35af98407465c9d37e29b133e00f8dfea85cdf05191db207b7f3d39"
+    },
+    {
+      "path": "LICENSE",
+      "size": 1064,
+      "sha256": "9629b9d5b0f233bb67619a30d56bf3e49d8cc5133c6f0e3509d4a952bc9beb39"
+    },
+    {
+      "path": "README.md",
+      "size": 17787,
+      "sha256": "fcc6bc9077e89a36c9518904748a3e6b3c82d8736c4e1d983eeb35dc5e6252c9"
+    },
+    {
+      "path": "SECURITY.md",
+      "size": 118,
+      "sha256": "39b7af7682afb1c525a028cc761e1a4d38ee0887bcc50b56282f862acb81624a"
+    },
+    {
+      "path": "client.go",
+      "size": 55466,
+      "sha256": "2a2b762d73f1aa22bf271a6aa9847077fd8130722195be1428da546de1ec13ce"
+    },
+    {
+      "path": "client_impersonate.go",
+      "size": 7963,
+      "sha256": "2a91f7441826993e6fcb62e89c2bff7ddad35faa10c6ef93874adb3d3b77ac09"
+    },
+    {
+      "path": "client_test.go",
+      "size": 21122,
+      "sha256": "3688bc3c1b9ee3410927eec79baca4f247efd5514ea7dad3057455d08f24f195"
+    },
+    {
+      "path": "client_wrapper.go",
+      "size": 30282,
+      "sha256": "ca330cd036d9cc0936ad5f0170dff3be7e4ec814b9a8c53b9259c89f1a1be0dc"
+    },
+    {
+      "path": "decode.go",
+      "size": 2408,
+      "sha256": "3f23430ba4332869610bf82f326ec031e6f19dfcec3ce26077b867f741db77b1"
+    },
+    {
+      "path": "decode_test.go",
+      "size": 375,
+      "sha256": "59a27f9ac730766ba0163f90670e9d1715425ef7565dabda15c862fbe2ae538b"
+    },
+    {
+      "path": "digest.go",
+      "size": 5366,
+      "sha256": "6f6ebce118c5602177f1c69a7cfb4c6b50cff3e4906808d0c1b9c6a00ca1a0c6"
+    },
+    {
+      "path": "dump.go",
+      "size": 2701,
+      "sha256": "3ec45495a9c31e031b57a7d16159c2c9c4ef22072a80422f0299c0e8a1d15e8d"
+    },
+    {
+      "path": "examples/README.md",
+      "size": 224,
+      "sha256": "74936ff1e8dc153e988a3b9d0acaab3769d9fe6ee4f0406e46a715bbbadee4ef"
+    },
+    {
+      "path": "examples/upload/README.md",
+      "size": 173,
+      "sha256": "2df0c29f7a7a558284bc51b6a090cf7335c4bf9ed852c20b6908562fb1128511"
+    },
+    {
+      "path": "examples/uploadcallback/README.md",
+      "size": 190,
+      "sha256": "034946b25a8fab07f0ef0af21d71566e62ac31461d0cf23a5563b4acef39030b"
+    },
+    {
+      "path": "go.mod",
+      "size": 548,
+      "sha256": "e82394e8d49b63b928457a80c0b8fa5e455625181e41fcc2e5367e0c7b57f5db"
+    },
+    {
+      "path": "go.sum",
+      "size": 3534,
+      "sha256": "51a2fb99ebecf63b24b052a666a7f551e5c09fc9984863793185c646d7711092"
+    },
+    {
+      "path": "header.go",
+      "size": 3131,
+      "sha256": "d786188aa914a118ba9a39c7c7930a705d0db97e3748db5aea766dbbb3555308"
+    },
+    {
+      "path": "http.go",
+      "size": 6385,
+      "sha256": "1bd70cb3c8acf9904e3462e61258ac5206a64664f28c58ad9e0581e96dc2a78c"
+    },
+    {
+      "path": "http2/priority.go",
+      "size": 737,
+      "sha256": "20c50d314d5dcbe18b8a558431c86172122d51c1b2f7cd6bb87b3e1cf4f38f81"
+    },
+    {
+      "path": "http2/setting.go",
+      "size": 1260,
+      "sha256": "aa29f10a85ff442e2d4e401c26bc883dc938b48ebcbdc1694b2e164f661dfe0e"
+    },
+    {
+      "path": "http_request.go",
+      "size": 4504,
+      "sha256": "66c78b936b70de8405fff321cbcc168f4ec77f24db73c7aa4c6da142cc159e6f"
+    },
+    {
+      "path": "internal/altsvcutil/altsvcutil.go",
+      "size": 4020,
+      "sha256": "2ff275acfc10fa92bb51c1777e2f171daf21f9001ef2f1b7b3b9b19528b0dcd2"
+    },
+    {
+      "path": "internal/altsvcutil/altsvcutil_test.go",
+      "size": 344,
+      "sha256": "3535b35bc270425690899127e3554f3c2f0e876e253c5cd897168d0c26869f62"
+    },
+    {
+      "path": "internal/ascii/print.go",
+      "size": 1254,
+      "sha256": "e9ed8a172e4f1f5c5863ddb668a58f2d42d794a5b987b1ed33d7adc437063750"
+    },
+    {
+      "path": "internal/ascii/print_test.go",
+      "size": 1796,
+      "sha256": "3ae0de98eaa5f0019349945fe560938f75b0aae108f80e42edfc7914e0458ca0"
+    },
+    {
+      "path": "internal/bisect/bisect.go",
+      "size": 23969,
+      "sha256": "de2e6582ffb06e9745167ae4ed820371b88c7b3af5a793d289a9997ebaedf916"
+    },
+    {
+      "path": "internal/charsets/.testdata/HTTP-vs-UTF-8-BOM.html",
+      "size": 2822,
+      "sha256": "bfd904fe2ea8c1419c6046f6f272835241954586cd58489b67425535ef2283f9"
+    },
+    {
+      "path": "internal/charsets/.testdata/UTF-16BE-BOM.html",
+      "size": 2670,
+      "sha256": "d4fb54a8ec7324716f105a12ea628055cd0915c329866e8b88bbbc4d5ef52387"
+    },
+    {
+      "path": "internal/charsets/.testdata/UTF-16LE-BOM.html",
+      "size": 2682,
+      "sha256": "a3cc30fd27329d6a661023f65bc4ac9c7c86686fbdf4a879d75b239b1c51aab9"
+    },
+    {
+      "path": "internal/charsets/.testdata/UTF-8-BOM-vs-meta-charset.html",
+      "size": 2791,
+      "sha256": "0efad60af8df9ecbef4681172513f3a01bd2a3aa9d76c99d1d1972422b707f49"
+    },
+    {
+      "path": "internal/charsets/.testdata/UTF-8-BOM-vs-meta-content.html",
+      "size": 2809,
+      "sha256": "7d7017bdd7a972da2608285aab35d9c3c3d494aa439b09ea5036bbebc13b4317"
+    },
+    {
+      "path": "internal/charsets/.testdata/meta-charset-attribute.html",
+      "size": 2700,
+      "sha256": "cbfec7b03302bc976fa1544373f2fe9c5c01e30e5661259bc79a3a8dd778ce9e"
+    },
+    {
+      "path": "internal/charsets/.testdata/meta-content-attribute.html",
+      "size": 2777,
+      "sha256": "72243a988f41f0654ff0d150dd2d2feae5ef2c488631752ce8e44bff665f725c"
+    },
+    {
+      "path": "internal/charsets/charsets.go",
+      "size": 2881,
+      "sha256": "9ae288ee0bbc2482ed7fa98c9b37a323bc79a217a753e11f3f39f3708c18335e"
+    },
+    {
+      "path": "internal/charsets/charsets_test.go",
+      "size": 1616,
+      "sha256": "db3082a9148a5ffebe8c36745c1a1cb57960d74c35a64913a9a8a75d6d7441ef"
+    },
+    {
+      "path": "internal/chunked.go",
+      "size": 6888,
+      "sha256": "267b176d0846f71b8f69faa1eaac27728158c388f4817caf31b647c3b097ba46"
+    },
+    {
+      "path": "internal/chunked_test.go",
+      "size": 6773,
+      "sha256": "646c6406de0a6c7fb46df31e90aacec7c4ca1c829311a086f3d8dad5224b0e8a"
+    },
+    {
+      "path": "internal/common/error.go",
+      "size": 263,
+      "sha256": "c229a244654ff23ecd656cc8416542fcfc5bb25530f41c291376bbce8b1a31d5"
+    },
+    {
+      "path": "internal/compress/brotli_reader.go",
+      "size": 749,
+      "sha256": "dd7ac3b5e6d22df20087b150b91a6adbfd73219302b0a0f97a042d0d3aaf9ae5"
+    },
+    {
+      "path": "internal/compress/deflate_reader.go",
+      "size": 786,
+      "sha256": "79d901922b6f727a59c69eacf89ae1c8afa8a826358563d22aeef2c9bd8b0f37"
+    },
+    {
+      "path": "internal/compress/gzip_reader.go",
+      "size": 953,
+      "sha256": "34b639f0f3216856cf7313c6ce2b2913fbf5c1a40e5664fdcc9bb0e31f1dda7f"
+    },
+    {
+      "path": "internal/compress/reader.go",
+      "size": 460,
+      "sha256": "5d70071028d3dde5a3a9e01bbb54e2760feecbd7098faf9a83e54313cbef460b"
+    },
+    {
+      "path": "internal/compress/zstd_reader.go",
+      "size": 833,
+      "sha256": "3295f1acf900754741debb3da6a48f15c3f7027a4020000cd0331070aa7d5400"
+    },
+    {
+      "path": "internal/dump/dump.go",
+      "size": 4275,
+      "sha256": "e159560c3697c146fb86aec2d8821f64cf6eda92ab1e7d8099d62f5af2ae84a9"
+    },
+    {
+      "path": "internal/godebug/godebug.go",
+      "size": 7301,
+      "sha256": "83f149109388601a1d4c8a4967dde364ef54ab5527b2e0afb5e1a9f5bb42e861"
+    },
+    {
+      "path": "internal/godebugs/table.go",
+      "size": 3182,
+      "sha256": "a58d934371cfd168f35a87c37c23ab3fcd8b68a28a058468cc5b2060c173ba5e"
+    },
+    {
+      "path": "internal/header/header.go",
+      "size": 1334,
+      "sha256": "029ad3bbb826edad0dc4fa91f210c350a0b71e03340369bfd38ff9ca55f7b317"
+    },
+    {
+      "path": "internal/header/sort.go",
+      "size": 795,
+      "sha256": "d23cb294929420d5fbc8e385cfb93b42481ab8f5279578cdccf235d540634bcf"
+    },
+    {
+      "path": "internal/http2/client_conn_pool.go",
+      "size": 7763,
+      "sha256": "35daedc2c693c297c41bddb19d3d1290474c3b6edf33053881e416e13bcc3920"
+    },
+    {
+      "path": "internal/http2/databuffer.go",
+      "size": 4320,
+      "sha256": "51312d5cb3023aaf1c5aa273ccccbe8bea71e000cdff337f599743fb1731c9e7"
+    },
+    {
+      "path": "internal/http2/errors.go",
+      "size": 4199,
+      "sha256": "334612a7d537cfa46ea3a29a304aae32d23d3aab487073f4559116cce08b8f96"
+    },
+    {
+      "path": "internal/http2/flow.go",
+      "size": 3370,
+      "sha256": "cdf7ad077c182118d3967a63d33f0731717b060b43bded46796d226c8fcb11f2"
+    },
+    {
+      "path": "internal/http2/frame.go",
+      "size": 50491,
+      "sha256": "c869f5fc4cdfe768864f86c2bd75f21389d1907ab7d4af4bd6a043a9d5926a86"
+    },
+    {
+      "path": "internal/http2/gotrack.go",
+      "size": 3152,
+      "sha256": "bfe393222ae7b62125a2f947803e5e7af052125edfe701261a41fde27d287a7c"
+    },
+    {
+      "path": "internal/http2/headermap.go",
+      "size": 2248,
+      "sha256": "22383610111f0140fb09f04386fd8da7a64d74b06918b426af63db1ac0aeec21"
+    },
+    {
+      "path": "internal/http2/http2.go",
+      "size": 4711,
+      "sha256": "9ea60cfb2b61858a7696128e3169de490c92894b7805f2d1df6e8e5d43499d2c"
+    },
+    {
+      "path": "internal/http2/pipe.go",
+      "size": 4497,
+      "sha256": "3fbe00025d441802c154549f5bd7562b9937ff43f1ce64c987bda75fcaf7f518"
+    },
+    {
+      "path": "internal/http2/timer.go",
+      "size": 515,
+      "sha256": "30890ddf045def82447c8f15901501ac315a7c00300a2ae6d04ba9d5ec666a05"
+    },
+    {
+      "path": "internal/http2/trace.go",
+      "size": 2075,
+      "sha256": "0eefd8ad972f4fc5bbee5dca6448de2cd4f93308b95ccd537bae9875a285ce02"
+    },
+    {
+      "path": "internal/http2/transport.go",
+      "size": 90330,
+      "sha256": "2b3280dc4e5b586fe081ccfcd6e04818b4b55c2dc1b05f11a801ea113c446de6"
+    },
+    {
+      "path": "internal/http3/body.go",
+      "size": 2920,
+      "sha256": "eb24bc8c950c5e7abb11bc5cc9aeaab743e742cef9abd96fe8134b19408cae89"
+    },
+    {
+      "path": "internal/http3/client.go",
+      "size": 13186,
+      "sha256": "780817f5a53eb63b2c37a6edb3966f4b3323ed3c86f4fd235ade21fdb99b3aa6"
+    },
+    {
+      "path": "internal/http3/conn.go",
+      "size": 13312,
+      "sha256": "7cb2cd52dcf207a850e729f5aa6af6bb584547f6815044513f0b2a97f7560014"
+    },
+    {
+      "path": "internal/http3/error.go",
+      "size": 1250,
+      "sha256": "54a9ee2b0bcf1e857a3f3b426caa0371531373706cf904d97137f9f367a3a68b"
+    },
+    {
+      "path": "internal/http3/error_codes.go",
+      "size": 2402,
+      "sha256": "6f35fe0eb9274ffe7c334fde67b929642084c795f94e0f722ee39b2f4f547359"
+    },
+    {
+      "path": "internal/http3/frames.go",
+      "size": 9373,
+      "sha256": "c489e4f9eab467e00a066338c1512dd3c0bdb7c80a737ece6158e6ffdccceb23"
+    },
+    {
+      "path": "internal/http3/headers.go",
+      "size": 7295,
+      "sha256": "8785a2ec9d6875c7226bc81a198ee2422a731b3fbcb9ad81b375f7c3c06346fd"
+    },
+    {
+      "path": "internal/http3/ip_addr.go",
+      "size": 1346,
+      "sha256": "5b59944b122a0c4f7330c318423b6a26645dff2a0f73d4ef1233273712bee948"
+    },
+    {
+      "path": "internal/http3/protocol.go",
+      "size": 2014,
+      "sha256": "9101829d496dad6295780904986a906bd9c36a275c2837340bb97c847eec8dba"
+    },
+    {
+      "path": "internal/http3/qlog.go",
+      "size": 1533,
+      "sha256": "06a4a39d6ffc83973ffa8e62ed77cee356bae839d19bfdbaaded14016806e7f1"
+    },
+    {
+      "path": "internal/http3/request_writer.go",
+      "size": 10145,
+      "sha256": "270f86fbbd28df7ddbcc14aff91285bb89ca62729fce31fa05bb6b0eb1b26a99"
+    },
+    {
+      "path": "internal/http3/server.go",
+      "size": 280,
+      "sha256": "b3cdc453770d34c98a0cf62d20becf13275ecfb36e7f8ef8b0a3c1fedc2efb70"
+    },
+    {
+      "path": "internal/http3/state_tracking_stream.go",
+      "size": 3749,
+      "sha256": "02dd48f2725538b4f59b1285f1f800af482a29d3534e4189847c64b3a42237c4"
+    },
+    {
+      "path": "internal/http3/stream.go",
+      "size": 13471,
+      "sha256": "4b8d668a38f9202be05005c509c5d7dd74323525d6d071cfb1e26af2f7779e77"
+    },
+    {
+      "path": "internal/http3/trace.go",
+      "size": 3022,
+      "sha256": "f858a4c640a8ccd4742741d4b43a9903e3d8394029cc307f3f50db7501550354"
+    },
+    {
+      "path": "internal/http3/transport.go",
+      "size": 15150,
+      "sha256": "cb553e6e289389ee78e87158bd0d34e0992ff07d7514a86c5a84d13e3f68d3aa"
+    },
+    {
+      "path": "internal/netutil/addr.go",
+      "size": 944,
+      "sha256": "b0981ee1b32e064ec56dd46f2c030394ddf35c304ac6c40e4bdf6dd5f19b1a81"
+    },
+    {
+      "path": "internal/socks/client.go",
+      "size": 3830,
+      "sha256": "5fa528d71ce4baad24458b91f4052a90ab17d4dc7f788b01d2abd3309adc6575"
+    },
+    {
+      "path": "internal/socks/dial_test.go",
+      "size": 9626,
+      "sha256": "f8c58c5bf1197a2d075c7501c992d3cfa2bd8401d44a125025b69a8fbe2e43d2"
+    },
+    {
+      "path": "internal/socks/socks.go",
+      "size": 8270,
+      "sha256": "131f66d427658d7a054abd95c3a317f16f28d76291b7428ecd2b1b2c0c0dfd9d"
+    },
+    {
+      "path": "internal/socks/socks_test.go",
+      "size": 1765,
+      "sha256": "b43036d8357794a1cce21bd4b939d01e833ca5aad73028e98e3664fa1c3c2d86"
+    },
+    {
+      "path": "internal/testcert/testcert.go",
+      "size": 2449,
+      "sha256": "734486f1b6c5e6d6650b40f1e639d72f75b9ce339b2d73a753ed501fa4d50e9d"
+    },
+    {
+      "path": "internal/testdata/ca.pem",
+      "size": 1029,
+      "sha256": "1dabfeda5e2efd6c2e08c0fc296751e85343e07be2bbef62f228c931bca3a7c4"
+    },
+    {
+      "path": "internal/testdata/cert.go",
+      "size": 1179,
+      "sha256": "28cc1ae8741b76eb3707306158cf93fe1c98515e96fb8e523ba3888d8bde60ea"
+    },
+    {
+      "path": "internal/testdata/cert.pem",
+      "size": 1042,
+      "sha256": "546bbd701cdad4976baafcee284e2609974d1b0f3b70ebdea000b959f389e9ba"
+    },
+    {
+      "path": "internal/testdata/cert_test.go",
+      "size": 730,
+      "sha256": "a09641fcccbcb5daf5ebf122b8e0dfc04017c415ba46269dbe96d50a4d10dcf6"
+    },
+    {
+      "path": "internal/testdata/generate_key.sh",
+      "size": 676,
+      "sha256": "db19c5ad6788f823bc75270aa5fad6686faae94b26be3d621ff0e41f1af13356"
+    },
+    {
+      "path": "internal/testdata/priv.key",
+      "size": 1704,
+      "sha256": "1a0066fcd8be2b1397002fe040bb28c221c539ef44d165556d56eb107f78c4c2"
+    },
+    {
+      "path": "internal/testdata/testdata_suite_test.go",
+      "size": 192,
+      "sha256": "af5b934a653f06720707549d1e3df618330b220b40d77a94c84e4306a28b5787"
+    },
+    {
+      "path": "internal/tests/assert.go",
+      "size": 2322,
+      "sha256": "d01cbf9b6bc9a652d3d82ab9319ffa1ff3ebd5d0d01b4f6b644d015b19f85bc9"
+    },
+    {
+      "path": "internal/tests/condition.go",
+      "size": 437,
+      "sha256": "a220cf45e5454b82b3b1dfcb530aa988af1139065274105a7c250724685bd7c5"
+    },
+    {
+      "path": "internal/tests/file.go",
+      "size": 308,
+      "sha256": "7603189d6695da7d01356c1b4c9d6e492cb4737a4d030e7227ea305f221e08a4"
+    },
+    {
+      "path": "internal/tests/net.go",
+      "size": 251,
+      "sha256": "b5f9a45f5ac909751848571f585a8108e9444448d09847e282b259b43221fd41"
+    },
+    {
+      "path": "internal/tests/reader.go",
+      "size": 151,
+      "sha256": "a152872ba2ff230e946034d2e1bad4826809856f71a281a12240472b7408bed8"
+    },
+    {
+      "path": "internal/tests/transport.go",
+      "size": 14,
+      "sha256": "18284b61c2ca6d828389dece6918cfb4b58c50ec3ad59d0be2843c3e910b6751"
+    },
+    {
+      "path": "internal/transport/option.go",
+      "size": 6934,
+      "sha256": "2f6712c44f08e1a521379ecb6e45a2ba64cde17cd6ff580e2ac2efa9573fcca3"
+    },
+    {
+      "path": "internal/util/util.go",
+      "size": 2927,
+      "sha256": "30ed7293c2e6cc52ce36bed0216213e94ee5ff580c76287ea6ef5a69c9c41e16"
+    },
+    {
+      "path": "logger.go",
+      "size": 1334,
+      "sha256": "ed4b241b3a97100f11f5aeb39448f84791d12b2e3394ce335b2a7ec5aa7cdb7d"
+    },
+    {
+      "path": "logger_test.go",
+      "size": 769,
+      "sha256": "9c26a5ff89e11cc5c69f7051120845e30d6a64123fdf41f1c2791c12de9a09d1"
+    },
+    {
+      "path": "middleware.go",
+      "size": 11942,
+      "sha256": "2619286c90f25d6240c7e28de95f84d6a50d040c3547e4d0e91340c4be53b6ad"
+    },
+    {
+      "path": "parallel_download.go",
+      "size": 6500,
+      "sha256": "77e671826d354ebd0975c46514d8da14fb87ed49e9ff3763198cd944cfebe60a"
+    },
+    {
+      "path": "pkg/altsvc/altsvc.go",
+      "size": 1126,
+      "sha256": "af545947ebde71f79660f059ae98980c4cd6360797e948e0a6a2cc8609ff4ee9"
+    },
+    {
+      "path": "pkg/altsvc/jar.go",
+      "size": 202,
+      "sha256": "994e03820cb401e7627286cf9d9daf74a3535f4fd848fa1df622391851ede194"
+    },
+    {
+      "path": "pkg/tls/conn.go",
+      "size": 1438,
+      "sha256": "dd598ee93647fa555b40e9ad4789591ad23e9ffbce23c1cd20300b9098725d52"
+    },
+    {
+      "path": "redirect.go",
+      "size": 4010,
+      "sha256": "24a96cadb1c9197daf6536f91ac691e9ec7b05bba1ea4f4fac3cb06f3889acfb"
+    },
+    {
+      "path": "req.go",
+      "size": 2802,
+      "sha256": "5352edb98b139dd19bbb6e07b8082c222897b779b783360c2a83840cd9431f7b"
+    },
+    {
+      "path": "req_test.go",
+      "size": 9800,
+      "sha256": "e7b062cd4e187d5e862a9239d06ae52d6e66123b8f7a27f951537f3d4bc41390"
+    },
+    {
+      "path": "request.go",
+      "size": 36554,
+      "sha256": "07f1e69d1bed6a284cda3223400f7b10c38a53fb4e02f3f60dc73617d0ae3c1f"
+    },
+    {
+      "path": "request_test.go",
+      "size": 28340,
+      "sha256": "6e673154deec01ad15fb0980b00e47376c4e32aeae7ddaa394b98add9c218dd2"
+    },
+    {
+      "path": "request_wrapper.go",
+      "size": 21245,
+      "sha256": "88ef15f64779b46eccf7ce6a85acea441cd71d94c0f7153b048866412362a5f2"
+    },
+    {
+      "path": "response.go",
+      "size": 8594,
+      "sha256": "f97d2fa3eb6a7aef1c47d72b92b42c385cbb482deae4ab1c72c82849ec30a2c6"
+    },
+    {
+      "path": "retry.go",
+      "size": 1565,
+      "sha256": "901129ab719f8398eaa4394f0f798171bff266e5882851fd9f04eb552a5d5938"
+    },
+    {
+      "path": "retry_test.go",
+      "size": 5564,
+      "sha256": "f639622e41d1b8c154719f60fb5e1ded6b1b62c11f68e84b3d25e57f4e0f710d"
+    },
+    {
+      "path": "roundtrip.go",
+      "size": 899,
+      "sha256": "3e8bcf5c23989843a53646a051e855cbe6c42b9cff2a56af7b8c0eaa58b026dc"
+    },
+    {
+      "path": "roundtrip_js.go",
+      "size": 12108,
+      "sha256": "195a44ce2f1f07cd7f97871e23d461d581042808b23fd35522d80bf218e058ed"
+    },
+    {
+      "path": "server.go",
+      "size": 416,
+      "sha256": "49dc26d2e4114ce77fdd2a142d149289bb5315958ef51984469d993f58a99505"
+    },
+    {
+      "path": "textproto_reader.go",
+      "size": 14480,
+      "sha256": "69f8e60b8678240daa9d589a48247c7f4ba7e784f0c2721429df1dbd7f5b42eb"
+    },
+    {
+      "path": "trace.go",
+      "size": 4404,
+      "sha256": "e62c9c43865a4a0d6ae02c61fd520ff077b4fb37fd10521e5dc7773a185f3f01"
+    },
+    {
+      "path": "transfer.go",
+      "size": 28948,
+      "sha256": "c595f4c58319ebc88f890b671f31900f5a79a45395e72428adea0b2b7de7936a"
+    },
+    {
+      "path": "transport.go",
+      "size": 110937,
+      "sha256": "624a7872be677404afb3d93a6edf71b215540b52a5da261239a93dbc73f409ba"
+    },
+    {
+      "path": "transport_default_other.go",
+      "size": 368,
+      "sha256": "e1676335462f5c0dac44221abcc4076120be3858880261e00a0f6f85ed1b70f7"
+    },
+    {
+      "path": "transport_default_wasm.go",
+      "size": 363,
+      "sha256": "a6063564d54e9a1ac6797f5d6f52df714e3e8d97f7a46bb1a985afff689e5e25"
+    }
+  ],
+  "allowedProductionAdaptations": {
+    "internal/http2/flow.go": [
+      "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0"
+    ],
+    "internal/http2/transport.go": [
+      "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0",
+      "28247830e9fb37184c6be718f483a0c7d0949022",
+      "local-required-dump-terminal-ordering-after-verified-original-race",
+      "local-required-default-h2-tls-trace-after-verified-named-failure",
+      "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
+    ],
+    "internal/http2/frame.go": [
+      "57f4235f83712a299328015548240512213a3852"
+    ],
+    "internal/dump/dump.go": [
+      "local-required-dump-trace-race-repair-after-verified-original-race",
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+    ],
+    "request.go": [
+      "local-required-dump-trace-race-repair-after-verified-original-race",
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+    ],
+    "response.go": [
+      "local-required-dump-trace-race-repair-after-verified-original-race"
+    ],
+    "trace.go": [
+      "local-required-dump-trace-race-repair-after-verified-original-race"
+    ],
+    "internal/http3/transport.go": [
+      "local-required-public-http3-tls-options-propagation-after-ci38496709035-verified-unknown-authority"
+    ],
+    "internal/http3/stream.go": [
+      "local-required-public-http3-response-body-repair-after-ci38735340631-verified-three-reds"
+    ],
+    "internal/compress/deflate_reader.go": [
+      "local-required-deflate-underlying-body-close-after-ci38737227705-verified-stream-retention"
+    ],
+    "decode.go": [
+      "099387e5ee9ac4631611281e6413ebcc7d0871ea"
+    ],
+    "digest.go": [
+      "local-required-common-digest-ownership-after-ci39355019380-verified-five-reds-child1743"
+    ],
+    "parallel_download.go": [
+      "local-required-parallel-download-contract-repair-after-ci39529607848-and-upstream417-child1748",
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+    ],
+    "client.go": [
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+    ],
+    "dump.go": [
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+    ],
+    "transport.go": [
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue",
+      "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
+    ],
+    "client_wrapper.go": [
+      "local-user-authorized-global-safari-wrapper-repair-existing-pr1712-20261029"
+    ],
+    "internal/bisect/bisect.go": [
+      "local-user-authorized-private-bisect-eviction-cache-atomic-read-after-actual-race-ci40853052089-pr1712-20261030"
+    ]
+  },
+  "newOwnedFiles": [
+    "LICENSE-GO-BSD",
+    "UPSTREAM.md",
+    "UPSTREAM-MANIFEST.json",
+    "internal/http2/flow_security_test.go",
+    "internal/http2/transport_security_test.go",
+    "internal/http2/frame_security_test.go",
+    "transport_security_test.go",
+    "internal/dump/dump_concurrency_test.go",
+    "dump_concurrency_test.go",
+    "trace_concurrency_test.go",
+    "http1_lifecycle_test.go",
+    "http1_upload_test.go",
+    "proxy_lifecycle_test.go",
+    "internal/http3/frame_contract_test.go",
+    "internal/http3/header_contract_test.go",
+    "internal/http3/request_writer_contract_test.go",
+    "internal/http3/CONTRACT-TESTS-LICENSE",
+    "http3_wire_peer_test.go",
+    "http3_wire_contract_test.go",
+    "http3_wire_cancel_test.go",
+    "http3_wire_tls_test.go",
+    "http3_wire_decompression_test.go",
+    "internal/http3/tls_config_contract_test.go",
+    "internal/compress/deflate_close_test.go",
+    "internal/http2/frame_contract_test.go",
+    "transfer_contract_test.go",
+    "internal/http2/transport_contract_peer_test.go",
+    "internal/http2/transport_contract_test.go",
+    "meta_charset_contract_test.go",
+    "CLIENT-BEHAVIOR-LICENSE",
+    "CLIENT-BEHAVIOR-PROVENANCE.json",
+    "CLIENT-BEHAVIOR-REVIEW.md",
+    "client_behavior_contract_test.go",
+    "client_behavior_observer_test.go",
+    "client_behavior_peer_test.go",
+    "client_redirect_cookie_contract_test.go",
+    "client_response_contract_test.go",
+    "digest_ownership_peer_test.go",
+    "digest_ownership_contract_test.go",
+    "DIGEST-OWNERSHIP-PROVENANCE.json",
+    "DIGEST-OWNERSHIP-REVIEW.md",
+    "DOWNLOAD-CONTRACTS-LICENSE",
+    "DOWNLOAD-CONTRACTS-PROVENANCE.json",
+    "DOWNLOAD-CONTRACTS-REVIEW.md",
+    "download_contract_test.go",
+    "download_wire_peer_test.go",
+    "parallel_download_contract_test.go",
+    "parallel_download_contract_windows_test.go",
+    "parallel_download_fallback_test.go",
+    "PARALLEL-DOWNLOAD-REPAIR.md",
+    "parallel_download_http3_cleanup_test.go",
+    "parallel_download_inprocess_contract_test.go",
+    "parallel_download_http3_probe_windows_test.go",
+    "parallel_download_http3_probe_other_test.go",
+    "parallel_download_default_output_test.go",
+    "trace_elapsed_peer_test.go",
+    "WINDOWS-TRACE-TEST-ADAPTATION.md",
+    "dump_ownership_contract_test.go",
+    "dump_ownership_peer_test.go",
+    "OWNED-DUMP-CLOSE-REPAIR.md",
+    "internal/http2/receive_flow_contract_test.go",
+    "internal/http2/RECEIVE-FLOW-CONTRACTS.md",
+    "custom_tls_handshake_peer_test.go",
+    "custom_tls_handshake_test.go",
+    "custom_tls_handshake_boundary_test.go",
+    "internal/http2/custom_tls_handshake_peer_test.go",
+    "internal/http2/custom_tls_handshake_test.go",
+    "CUSTOM-TLS-OWNERSHIP-REPAIR.md",
+    "H1-BOUNDARY-CONTRACTS.md",
+    "PUBLIC-API-COVERAGE-CONTRACTS.md",
+    "PUBLIC-DEFAULT-CONTRACTS.md",
+    "SAFARI-WRAPPER-CONTRACTS.md",
+    "h1_boundary_contract_test.go",
+    "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json",
+    "internal/bisect/BISECT-CONTRACTS.md",
+    "internal/bisect/contracts_test.go",
+    "internal/http2/COVERAGE-CONTRACTS.md",
+    "internal/http2/coverage_contract_peer_test.go",
+    "internal/http2/coverage_frame_contract_test.go",
+    "internal/http2/coverage_transport_contract_test.go",
+    "public_api_dump_contract_test.go",
+    "public_api_form_contract_test.go",
+    "public_api_peer_test.go",
+    "public_api_policy_contract_test.go",
+    "public_api_request_contract_test.go",
+    "public_default_contract_test.go",
+    "safari_wrapper_contract_test.go"
+  ],
+  "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
+  "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+  "validation": "Current RAW880 registration:112 unchanged originals+18 production adaptations+2 original test adaptations=132; all132 immutable original archive rows, prior17 adaptation entries and originaltwo test adaptations retained. User-authorized bisect eviction-cache atomic-read repair is18th, after Safari wrapper17th. Same actual per-file85 gate applies to all18; all880 named/full race cases, originalfour completions, four atomic profiles and both original global85 gates remain required. Historical16/17 component records retain their historical meanings. Latest production repair/verifier controls have no runtime/format/coverage PASS; require exact-head independent review and actual remote CI.",
+  "adaptedCandidateFiles": [
+    {
+      "path": "internal/http2/flow.go",
+      "sha256": "fedf89792079bcd134e4c41da64f5ac99a0881a681cf5b642c9e086d4e655250",
+      "bytes": 5073,
+      "sources": [
+        "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0"
+      ]
+    },
+    {
+      "path": "internal/http2/transport.go",
+      "sha256": "074f9a87a963011ad5ae0ea486192e4ec8b22856b75fb66f279398babc89382e",
+      "bytes": 95229,
+      "sources": [
+        "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0",
+        "28247830e9fb37184c6be718f483a0c7d0949022",
+        "local-required-dump-terminal-ordering-after-verified-original-race",
+        "local-required-default-h2-tls-trace-after-verified-named-failure",
+        "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
+      ]
+    },
+    {
+      "path": "internal/http2/frame.go",
+      "sha256": "077638fd39a581ba72f643e7ab0704f69cb24c63858d0c9dfd45b18e1021eb2b",
+      "bytes": 51165,
+      "sources": [
+        "57f4235f83712a299328015548240512213a3852"
+      ]
+    },
+    {
+      "path": "internal/dump/dump.go",
+      "sha256": "94ec67e462133fa86624f44470c2e96f01b518ffbd1eb519b2ac9ea3a01e84f6",
+      "bytes": 8043,
+      "sources": [
+        "local-required-dump-trace-race-repair-after-verified-original-race",
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+      ]
+    },
+    {
+      "path": "request.go",
+      "sha256": "26df88a2481a72bb99b1ad6c8c0b9b14513bf411c91624356d8ae091547e739b",
+      "bytes": 39575,
+      "sources": [
+        "local-required-dump-trace-race-repair-after-verified-original-race",
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+      ]
+    },
+    {
+      "path": "response.go",
+      "sha256": "e9b11e6e019ed7e528b4eb7bd934bfdaedd6236ea4cca926941b5f3dc82a4b95",
+      "bytes": 8642,
+      "sources": [
+        "local-required-dump-trace-race-repair-after-verified-original-race"
+      ]
+    },
+    {
+      "path": "trace.go",
+      "sha256": "61e14d875a2d3d2392ccc8085c0ba210c0db3f26f8cf5592cf5183f7ebb247aa",
+      "bytes": 5909,
+      "sources": [
+        "local-required-dump-trace-race-repair-after-verified-original-race"
+      ]
+    },
+    {
+      "path": "internal/http3/transport.go",
+      "sha256": "e95696a5f3ce8f7e6443ba253411ecc29fbdcfb2cb769fa506818b09734641a8",
+      "bytes": 15327,
+      "sources": [
+        "local-required-public-http3-tls-options-propagation-after-ci38496709035-verified-unknown-authority"
+      ]
+    },
+    {
+      "path": "internal/http3/stream.go",
+      "sha256": "170be74e8af6dbd304b24ffc5db60a36079ef52b0dfa2bf4b553434a84a86f80",
+      "bytes": 13491,
+      "sources": [
+        "local-required-public-http3-response-body-repair-after-ci38735340631-verified-three-reds"
+      ]
+    },
+    {
+      "path": "internal/compress/deflate_reader.go",
+      "sha256": "56836c9d3d2c3c230e311a761a86039d7a965ad18eac70213aad67ea60eeddaf",
+      "bytes": 881,
+      "sources": [
+        "local-required-deflate-underlying-body-close-after-ci38737227705-verified-stream-retention"
+      ]
+    },
+    {
+      "path": "decode.go",
+      "sha256": "9a032c80b73a67b04880249f7a26c1fc6ed9fbf28977ccedbc04dfe0606526e4",
+      "bytes": 2503,
+      "sources": [
+        "099387e5ee9ac4631611281e6413ebcc7d0871ea"
+      ]
+    },
+    {
+      "path": "digest.go",
+      "sha256": "265a58ec9ab21b8788575e7dcf40002dac773e29fc3fff06ac0ba6416b17e154",
+      "bytes": 6097,
+      "sources": [
+        "local-required-common-digest-ownership-after-ci39355019380-verified-five-reds-child1743"
+      ]
+    },
+    {
+      "path": "parallel_download.go",
+      "sha256": "12a1f6b0d737a8b9d4704738ac74b74726d961c94caf49a76939aacf04bc89ca",
+      "bytes": 14004,
+      "sources": [
+        "local-required-parallel-download-contract-repair-after-ci39529607848-and-upstream417-child1748",
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+      ]
+    },
+    {
+      "path": "client.go",
+      "sha256": "a7db0cc3329c062028c6178e74546fc498c34b76bbfe3390d3c97e207e0355e8",
+      "bytes": 56029,
+      "sources": [
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+      ]
+    },
+    {
+      "path": "dump.go",
+      "sha256": "a86c9b287ac7148f4764f10e5f2cc2a33ddd9e8c323bc1844ad5590f8c1c33c6",
+      "bytes": 8784,
+      "sources": [
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+      ]
+    },
+    {
+      "path": "transport.go",
+      "sha256": "0332c0ed2c207ee4597d9c7e90e93c8cadd6dbc7a017a3715d67c242ba4a81cb",
+      "bytes": 114700,
+      "sources": [
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue",
+        "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
+      ]
+    },
+    {
+      "path": "client_wrapper.go",
+      "sha256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+      "bytes": 30244,
+      "sources": [
+        "local-user-authorized-global-safari-wrapper-repair-existing-pr1712-20261029"
+      ]
+    },
+    {
+      "path": "internal/bisect/bisect.go",
+      "sha256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+      "bytes": 23993,
+      "sources": [
+        "local-user-authorized-private-bisect-eviction-cache-atomic-read-after-actual-race-ci40853052089-pr1712-20261030"
+      ]
+    }
+  ],
+  "adaptedCandidateStatus": "RAW source-bound hashes for18 production adaptations. Prior17 entries unchanged and bisect appended at index17; original132 archive rows andtwo test adaptations retained. No local/87 executable validation. Remote formatting, actual880 named/full race, all18 per-file85/four profiles/both global85/security remain mandatory.",
+  "originalUnmodifiedFileCount": 112,
+  "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
+  "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
+  "http3ContractTestProvenance": {
+    "repository": "https://github.com/quic-go/quic-go",
+    "version": "v0.57.1",
+    "revision": "4b0ab7e48554e4440448c9252a92d7c065d88331",
+    "license": "internal/http3/CONTRACT-TESTS-LICENSE",
+    "testPrefix": "TestReqHTTP3Contract_",
+    "requiredLeafCount": 55,
+    "files": [
+      {
+        "localPath": "internal/http3/frame_contract_test.go",
+        "upstreamPaths": [
+          "http3/frames_test.go"
+        ]
+      },
+      {
+        "localPath": "internal/http3/header_contract_test.go",
+        "upstreamPaths": [
+          "http3/headers_test.go"
+        ]
+      },
+      {
+        "localPath": "internal/http3/request_writer_contract_test.go",
+        "upstreamPaths": [
+          "http3/request_writer_test.go",
+          "http3/http3_helper_test.go"
+        ]
+      }
+    ],
+    "adaptation": "Private parser/frame close callback only; actual private response functions receive dump arguments; no absent requestFromHeaders server API; exact decoded request and qlog assertions; public existing testutils/events uses stdlib only. No production or dependency changes. Formatting and runtime evidence pending CI."
+  },
+  "http3WireContractTestProvenance": {
+    "repository": "https://github.com/quic-go/quic-go",
+    "version": "v0.57.1",
+    "revision": "4b0ab7e48554e4440448c9252a92d7c065d88331",
+    "officialSources": [
+      "http3/http3_helper_test.go",
+      "http3/client_test.go",
+      "http3/transport_test.go",
+      "http3/body_test.go",
+      "http3/server.go",
+      "http3/response_writer.go"
+    ],
+    "license": "internal/http3/CONTRACT-TESTS-LICENSE",
+    "localFiles": [
+      "http3_wire_peer_test.go",
+      "http3_wire_contract_test.go",
+      "http3_wire_cancel_test.go"
+    ],
+    "requiredLeafCount": 6,
+    "testPrefix": "TestReqHTTP3Wire_",
+    "scope": "Explicit public C.SetTLSClientConfig().EnableForceHTTP3() requests against real TLS 1.3 h3 UDP peers; verified fresh CA, payload and ConnContext identity; real remote stream cancellation codes and peer writes; real QUIC Initial blackhole with a live TCP control. No private TLS or dial overrides, production or dependency changes, or gateway H3 enablement. Private t3 access is limited to owned resource cleanup. Formatting and runtime evidence await remote CI; public TLS propagation must be proven by actual CI, with no defect or PASS claim yet."
+  },
+  "http3TLSOptionsRepair": {
+    "sourceRevision": "247aa96f489227c411c5ce35e557f8f3494709b2",
+    "sourcePath": "internal/http3/transport.go",
+    "actualRedHead": "6d0e42071f4374773283d305b33db523927a3f7c",
+    "actualRedRun": 38496709035,
+    "actualRedArtifact": 11864326025,
+    "actualRedArtifactSHA256": "fad00c7c6c63363c52385384964f03a9b778d3aa37ef45a1fe97c1f926266c09",
+    "problem": "Explicit public TLS RootCAs fail actual forced HTTP3 handshakes because the private H3 TLS field shadows shared Options. Three original wire leaves fail with local QUIC CRYPTO_ERROR0x12a and x509 unknown authority.",
+    "repair": "Preserve explicit H3 TLS config priority; when nil read the current shared Options TLS config if Options is nonnil. Keep clone/default/SNI/ALPN behavior.",
+    "newTestFiles": [
+      "http3_wire_tls_test.go",
+      "internal/http3/tls_config_contract_test.go"
+    ],
+    "newRequiredLeaves": 11,
+    "scope": "Public client setters before/after enabling HTTP3, transport setter, getter pointer mutation, insecure skip verify before/after; narrow private dial controls still perform real loopback QUIC TLS handshakes for nil Options/default and explicit TLS precedence. Gateway default H3 reachability is not claimed. No exact corresponding upstream issue or PR established."
+  },
+  "http3AutoDecompressionRepair": {
+    "sourcePath": "internal/http3/stream.go",
+    "actualRedHead": "b1d1615cc2bef040138797ad5bd31c5edaffd782",
+    "actualRedRun": 38735340631,
+    "actualRedArtifact": 11973630850,
+    "actualRedArtifactSHA256": "a7b0d302d01dd5d00a44db35bfc9dd4ea4d02a130c5731883319bbcfd64e771e",
+    "problem": "Public EnableAutoDecompress with forced HTTP3 loses response bodies: unencoded body returns nil Body with nonzero length; explicitly negotiated gzip and deflate return empty decoded payloads. Three genuine body-loss assertions fail while all169 previous mandatory leaves and four real-wire controls pass.",
+    "repair": "Initialize the response stream body to the actual wire body. Replace it and remove encoded length/encoding metadata only when a supported decoder is selected. Preserve unknown and explicit identity coding bodies, metadata, and Uncompressed=false.",
+    "newTestFiles": [
+      "http3_wire_decompression_test.go"
+    ],
+    "newRequiredLeaves": 11,
+    "scope": "Real verified TLS1.3 HTTP3 loopback responses via public client options. Retain original seven RED/control leaves and add enabled/disabled unknown and explicit identity coding transparency controls. Remote fixed-head named/all race results, all declared fix-block85 results and independent review remain required. Default gateway HTTP3 traffic is not claimed. No exact corresponding upstream issue or PR established."
+  },
+  "deflateUnderlyingCloseRepair": {
+    "sourcePath": "internal/compress/deflate_reader.go",
+    "actualRedHead": "0e5c29fd326a4e5a51869f266298fb68854bbbbd",
+    "actualRedRun": 38737227705,
+    "actualRedArtifact": 11974018137,
+    "actualRedArtifactSHA256": "b351ff52a6e06883094fca61c543ee26afedb271cbd310ed6e4fbc486c9511fb",
+    "problem": "After a genuine partial decoded Read, DeflateReader.Close closes only the decoder. The real nonfinal HTTP3 peer stream remains open with caller context live. Unread Close receives remote H3_REQUEST_CANCELLED and all180 prior mandatory leaves pass.",
+    "repair": "Always close the underlying body after attempting decoder Close. Preserve decoder error priority, otherwise return the underlying close error. Repeated Close delegates to both existing resources each time; add no shared state.",
+    "testFiles": [
+      "http3_wire_decompression_test.go",
+      "internal/compress/deflate_close_test.go"
+    ],
+    "newRequiredLeaves": 9,
+    "scope": "Retain both exact real QUIC stream-retirement cases, with client timeout disabled and caller context live. Seven narrow unit controls add unread/initialized closure, decoder/body/both errors and repeated Close; they do not replace actual peer cancellation evidence. Remote fixed-head189 named/all race tests, all10 fix-block85 results and independent review remain required. No gateway HTTP3 default traffic claim."
+  },
+  "http2FrameContractTestProvenance": {
+    "repository": "https://github.com/golang/net",
+    "version": "v0.60.0",
+    "revision": "18ece0ce30bc35fa81fe72028bf309bb3ff3f4a5",
+    "license": "LICENSE-GO-BSD",
+    "testPrefix": "TestReqHTTP2FrameContract_",
+    "requiredLeafCount": 149,
+    "files": [
+      {
+        "localPath": "internal/http2/frame_contract_test.go",
+        "upstreamPaths": [
+          "http2/frame_test.go"
+        ],
+        "sourceSHA256": "8df3b91ab676d86965f45b393d3afa4e308709a79916339577d4dd61925a7e89",
+        "upstreamSHA256": "f4d911738bcdc395e9e6cb0a252940776ee0f9c17d8f6e054bb8e4ad00ed2186",
+        "upstreamGitBlob": "5f37328d307afa7e12f3acafee92e0248365046a",
+        "sourceBytes": 48509
+      }
+    ],
+    "adaptation": "Private req Framer and existing package-level ReadFrameHeader; req public Setting/SettingID/PriorityParam and hpack decoder. Explicit pinned official subset and byte-input/header-only/read-body-consumption adaptations; not whole33 leaf-equivalence. Both priority exclusive modes, six official HEADERS combinations, unpadded/open and padded/end PUSH_PROMISE, header byte carries, repeated zero payload reuse and maxStringLength bigString are retained. No unsupported RFC9218 or Framer split API added. Existing source/gates/dependencies unchanged; remote Go1.26.9 formatter output independently verified and imported; named301/whole/race and all other runtime/coverage evidence pending remote CI.",
+    "sealedInputSourceSHA256": "7da8903b5acf00271bb5782a2975bddb5741f41e5eaeaa55ecc6e677f39b076a",
+    "formatEvidence": {
+      "run": 38498180545,
+      "workflowHead": "7781b347d097c2a176609a053cca350bc7aa7e51",
+      "artifact": 11864619022,
+      "outputSHA256": "8df3b91ab676d86965f45b393d3afa4e308709a79916339577d4dd61925a7e89",
+      "status": "Actual remote formatting success independently verified by root, exact single output imported; new301-leaf named/whole/race and all runtime/coverage approval pending remote CI.",
+      "independentArtifactReviewSHA256": "a0578af522148d4607b16bb259633a4182c894d731c3b217918ba48c49fb6750"
+    }
+  },
+  "http1TransferContractTestProvenance": {
+    "repository": "https://github.com/golang/go",
+    "version": "go1.26.9",
+    "revision": "2ae494ef9fb90e0da0073c31800ba38870249994",
+    "upstreamPath": "src/net/http/transfer_test.go",
+    "upstreamSHA256": "7400e55c2af5ddfc23684689f7a13bf77d22bec82db04c136914b69822459308",
+    "upstreamGitBlob": "b1a5a931035c4b141f61b58d6543e1c5c8481759",
+    "license": "LICENSE-GO-BSD",
+    "testPrefix": "TestReqHTTP1Transfer_",
+    "requiredLeafCount": 30,
+    "localPath": "transfer_contract_test.go",
+    "sourceBytes": 12026,
+    "sourceSHA256": "8477c8641306e0991c8aa763c17efbbd1cf169bcaa9c22b34c317157f11d4eab",
+    "adaptation": "Four pinned original top contracts: malformed trailer exact error/closed state, final chunk exact EOF, seven Transfer-Encoding rejection/acceptance inputs and six Content-Length sign/overflow boundaries with actual returned values. Final response uses private persistConn._readResponse, not official net/http parser. Original reader-classification test omitted; original writeBody optimization test replaced by behavioral buffer/string/file output/ownership matrices, not claimed equivalent. Add exact writer chunk/trailer bytes and failure close/error rules; full private response framing validates normalized CL/TE and preserves next-response bytes. No sockets, production changes or dependency changes.",
+    "formatEvidence": {
+      "run": 38738382035,
+      "workflowHead": "07e957724d3cd2fe78e1fbb41e095ca317a95ad2",
+      "sourceCandidate": "80ceae177ddbaf9a662e25384e3207bbd8327133",
+      "artifact": 11974149217,
+      "artifactSHA256": "9845c647ecaa42b807a2ff91d393ef5157b3ee0fcd5bd7bcdae0cbead4842e9f",
+      "independentReviewSHA256": "00be0aa224e79a0d3688a8bc247e3e2caa5e43954cf3bf7ea94b604580fa68bd",
+      "status": "Actual remote formatter output independently verified before import; no runtime PASS; new348 named/all/race and all original gates remain required."
+    }
+  },
+  "http2TransportContractTestProvenance": {
+    "repository": "https://github.com/golang/net",
+    "version": "v0.60.0",
+    "revision": "18ece0ce30bc35fa81fe72028bf309bb3ff3f4a5",
+    "upstreamPath": "http2/transport_test.go",
+    "upstreamSHA256": "f7d6f62c8aa2bc03fe605ac5e814021d988897c04083e3243b33ba774ade95d9",
+    "upstreamGitBlob": "1157e3156132d40151061d9174549712872d80ae",
+    "license": "LICENSE-GO-BSD",
+    "testPrefix": "TestReqHTTP2TransportContract_",
+    "requiredLeafCount": 25,
+    "files": [
+      {
+        "localPath": "internal/http2/transport_contract_peer_test.go",
+        "sourceBytes": 10781,
+        "sourceSHA256": "595d16977933cb1fefcde4d147c1669d890f3f343d239191943c6cb56011dee0"
+      },
+      {
+        "localPath": "internal/http2/transport_contract_test.go",
+        "sourceBytes": 16969,
+        "sourceSHA256": "bc37d78144b35d68721ce42bd45d79e1205c3f200a664f8b1d5ab6baedc21412"
+      }
+    ],
+    "adaptation": "Behavioral subset only: private Transport.RoundTrip and cached pool over deadline-bounded net.Pipe, independent x/net frame codec and stateful HPACK decoder. Assert exact outgoing method/path/scheme/authority and replay payload/GetBody calls, GOAWAY debug/retry/drain, genuine DATA-before-HEADERS error without retry, header timeout/cancellation RST and unrelated stream survival, valid/invalid trailers, cached reuse/idle close/single-use, Shutdown and Ping. No official client replaces the tested private Transport; explicit nonnil req Options; no production/dependency changes. Full retry-limit, pending-dial ownership and the official163 top suite are not claimed equivalent or covered.",
+    "formatEvidence": {
+      "run": 38737258610,
+      "workflowHead": "d36e3deca7b4b3dae36ed11d6ef96e68b3331774",
+      "sourceCandidate": "7fc63888ca592cb975b0714dabfda873ee56f22f",
+      "artifact": 11974452501,
+      "artifactSHA256": "9b678a9f36cf7588ef16b5b986555efdc44f8074c50bd5d771948efe3e657bdf",
+      "independentArtifactReviewSHA256": "61d6203714d09a6de3eccebc80e10896343cfae2f03d56e1ef92b8ff4d1fc56f",
+      "status": "Exact remote formatter outputs independently verified by ROOT and imported; actual named/whole race and coverage pending CI."
+    },
+    "postFormatReviewAdjustments": [
+      {
+        "path": "internal/http2/transport_contract_test.go",
+        "change": "Remove one unused net/http import detected by remote CI build; no test/production/control semantics change. Remote formatter originally produced the recorded output; final source hash above records this separately reviewed deletion.",
+        "failedRun": 38738396729,
+        "failedHead": "3acf1b7c6ac1fb2a9b8c9e2596f40a50bd862333",
+        "requiredRerun": "Exact-head named/whole race suites, graph/old-RED, format and coverage all remain mandatory."
+      },
+      {
+        "path": "internal/http2/transport_contract_peer_test.go",
+        "change": "Observe returned ClientConn through a delegating real-private-pool wrapper; single-use connections intentionally bypass pool.keys. Preserve actual selection/dial/reservation/MarkDead behavior and all single-use wire/EOF/dial-count assertions. No production change.",
+        "failedRun": 38838824935,
+        "failedHead": "693a8c9b7af7892e5ffc2cac4cf10685a80d2945",
+        "requiredRerun": "Exact-head 343 named/whole race suites and all original gates; previous 24/25 D leaves passed but package failed."
+      }
+    ]
+  },
+  "metaCharsetRepair": {
+    "repository": "https://github.com/imroc/req",
+    "upstreamIssue": 525,
+    "upstreamPR": 535,
+    "sourceCommit": "099387e5ee9ac4631611281e6413ebcc7d0871ea",
+    "mergeCommit": "4c03790d998f4d703b7389c2b4c543f3886c705a",
+    "forkIssue": 1736,
+    "implementationPR": 1712,
+    "permanentTrackingIssue": 291,
+    "sourcePath": "decode.go",
+    "upstreamParentBlob": "825cffc66a1ae08cb4858ef0ae0d06cb0fc3120f",
+    "fixedBlob": "60547d921be5ebb13ba808359d2e052ddce3702c",
+    "actualRedRun": 39039349373,
+    "actualRedHead": "7f298af72fb175645cfcbad7eae1d7cee22940a8",
+    "actualRedArtifact": 12103157716,
+    "actualRedArtifactSHA256": "60bc45097b30120234df4612fb2d54800ba89aa7a4deb51c981edceff928a83c",
+    "actualRedCases": 2,
+    "actualRedControlPasses": 5,
+    "priorRequiredLeavesPreserved": 338,
+    "requiredLeafCount": 8,
+    "testPrefix": "TestReqMetaCharset_",
+    "testFiles": [
+      "meta_charset_contract_test.go"
+    ],
+    "rawTestSourceSHA256": "c10f4eeedb6a9d2ad21e9636d75b3a7c87da706d8882dbc535ec15289c69e500",
+    "repair": "Replay the actual sniffed bytes through the same streaming decoder as the remaining body; sniff only p[:n]. Production decode.go is the exact official535 blob.",
+    "status": "Unchanged-source two-failure/five-control RED and full338 baseline independently verified; exact fixed source and eight-case fixture statically reviewed; remote formatting39104489677 verified unchanged output. Fixed346/full mutation evidence and final combined401 exact-head named/all race, all11 added-block85 and Codecov85 remain required. No PR approval.",
+    "combinedRequiredLeafCount": 401,
+    "independentRedReviewSHA256": "79ca03997abfc7ef3deeed75ee154ed4869c9eef54d4fecab6b4391c6c1d57ab"
+  },
+  "digestOwnership1743": {
+    "childIssue": "https://github.com/APIs-Gateway/sub2api/issues/1743",
+    "parentIssue": 1711,
+    "sharedPR": 1712,
+    "permanentTrackingIssue": 291,
+    "state": "NEW raw production source candidate; same OLD Go fixtures; all new remote OLD/NEW gates pending",
+    "retainedOriginalLeaves": 401,
+    "reviewedPublicClientLeaves": 44,
+    "newOwnershipLeaves": 23,
+    "totalRequiredLeaves": 468,
+    "adaptationsAtThisOldSource": 11,
+    "unchangedOriginalsAtThisOldSource": 121,
+    "originalDigestGitBlob": "0695d8c3063c448e29ab05d44f0f8fbbd9a1cf81",
+    "newOwnedPaths": [
+      "CLIENT-BEHAVIOR-LICENSE",
+      "CLIENT-BEHAVIOR-PROVENANCE.json",
+      "CLIENT-BEHAVIOR-REVIEW.md",
+      "client_behavior_contract_test.go",
+      "client_behavior_observer_test.go",
+      "client_behavior_peer_test.go",
+      "client_redirect_cookie_contract_test.go",
+      "client_response_contract_test.go",
+      "digest_ownership_peer_test.go",
+      "digest_ownership_contract_test.go",
+      "DIGEST-OWNERSHIP-PROVENANCE.json",
+      "DIGEST-OWNERSHIP-REVIEW.md"
+    ],
+    "completePriorGenuineRed": {
+      "run": 39355019380,
+      "controllerHead": "510095bfe25f5db976e9c1315d810e19d560f664",
+      "candidateHead": "9c0c0641aa6a90accd4c688c5bcad7eebc53e699",
+      "artifact": 12235400344,
+      "sha256": "1a2de84ed264e8fb718b591e18f0f42eadc6bed44da8e7cddb3a68c2aef73f4b",
+      "claim": "Diagnostic complete5RED39PASS plus401, not applicationPASS."
+    },
+    "oldTestSourceHead": "7b0d92fb4c6bd52a62218d505130944163b73464",
+    "adaptationsAtThisNewSource": 12,
+    "unchangedOriginalsAtThisNewSource": 120
+  },
+  "parallelDownload1748": {
+    "childIssue": "https://github.com/APIs-Gateway/sub2api/issues/1748",
+    "sharedPR": 1712,
+    "permanentTrackingIssue": 291,
+    "upstreamReports": [
+      "https://github.com/imroc/req/issues/417",
+      "https://github.com/imroc/req/issues/416"
+    ],
+    "officialUnfixedBlob": "cdff7288e9fdc71705fd9718d3f99819a547b58f",
+    "baseSourceHead": "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63",
+    "frozenGSourceHead": "aa656edd6f2aed8c595368ee802516fa571e317d",
+    "compositionMerge": "544a265751fc6a4740b99e7aa0f3a5efc96148f8",
+    "actualObservation": {
+      "run": 39529607848,
+      "linuxNamed": {
+        "run": 32,
+        "pass": 23,
+        "fail": 9
+      },
+      "linuxFull": {
+        "run": 32,
+        "pass": 23,
+        "fail": 9
+      },
+      "baseline401": "PASS; independent immutable baseline evidence",
+      "windows": "inputs watchdog; G not executed",
+      "failureClassification": "Eight data/status assertions; ninth short-transfer/cancel completion timeout is separate"
+    },
+    "retainedPriorLeaves": 468,
+    "frozenLinuxGLeaves": 32,
+    "newFullGetControlLeaves": 1,
+    "totalRequiredLinuxLeaves": 502,
+    "windowsGLeaves": 33,
+    "productionAdaptations": 13,
+    "unchangedOriginalFiles": 118,
+    "newOwnedPaths": [
+      "parallel_download_fallback_test.go",
+      "PARALLEL-DOWNLOAD-REPAIR.md",
+      "parallel_download_http3_cleanup_test.go",
+      "parallel_download_http3_probe_windows_test.go",
+      "parallel_download_http3_probe_other_test.go"
+    ],
+    "repair": "Invocation-owned queues/temp directory; cancel dispatch and join workers; validate HEAD/206 metadata and exact body; real single header-absent full-GET200 fallback only after partial cleanup; close owned files/bodies, retain caller writer ownership.",
+    "status": "RAW source candidate; remote formatting/build/race/actual named/full/profile/Windows and all85 gates NOTRUN; no approval.",
+    "sourceReviewCorrections": [
+      {
+        "after": "24f00d4fd6ceb4b6fc3a1edf5e6bb73495e44147",
+        "withdrawnFinding": "Header is already deep-cloned through embedded Transport.Clone; no redundant clone added.",
+        "confirmedFinding": "Client.Clone overrides public http.Client.Transport, bypassing custom/nil caller transport only during common-Range recovery.",
+        "repair": "Preserve installed custom/nil transport using typed-pointer identity comparison, never interface equality; close only owned cloned req transport. Same existing full-GET leaf now uses an actual noncomparable delegating caller wrapper with peer-observed auth header and ownership/traversal assertions.",
+        "runtimeStatus": "RAW static source only; remote format/build/test/race evidence pending."
+      },
+      {
+        "after": "a79f937647c43e28ab940f25a5debbcc5f215b8b",
+        "confirmedFinding": "Private fallback Client.Clone owns a separately created forced HTTP3 transport/UDP socket; outer CloseIdleConnections only releases H1/H2 and dropping that clone leaks its HTTP3 resources.",
+        "repair": "Only fetchTask clone cleanup closes owned embedded transport idle connections and owned t3.Close, after body/file defers; all cleanup calls attempted and original nonnil error retained. Global CloseIdleConnections and caller/custom transports are unchanged.",
+        "testLeaf": "TestReqParallelDownloadHTTP3Cleanup/owned_fallback_socket_released",
+        "testOracle": "Real ForceHTTP3 peer public connection/address, verified h3/TLS and held full body; exact loopback UDP endpoint must reject bind with EADDRINUSE while active, then Do+fullbytes/EOF+normal remote QUIC close and exact endpoint rebind must succeed; caller connection must remain occupied and be genuinely reused.",
+        "platform": "No platform skip. POSIX syscall.EADDRINUSE or Windows actual WSAEADDRINUSE10048 only; permission/invalid address/bind precondition failures are never success. This test does not prove Windows file Close.",
+        "runtimeStatus": "RAW only; no local/87 formatting/build/test/checker; all actual execution pending remoteCI."
+      }
+    ],
+    "newHTTP3OwnedResourceLeaves": 1,
+    "remoteFormat": {
+      "run": 39742212554,
+      "workflowController": "2ea71e8926bb8ac7dbb970f5dffdb87352d101b4",
+      "workflowSource": "b9f7ec3298ef4536164a32c533f475045df0e310",
+      "workflowSourceTree": "a0835c8e5ee2c15da09eca01e2106897f91db418",
+      "GoVersion": "go version go1.26.10 linux/amd64",
+      "artifact": 12410185722,
+      "artifactBytes": 30519812,
+      "artifactSHA256": "96d3f7eaba5cb8b3209324ba3bf75fd369ac01fcdf5f5e65b93439e86ae086ce",
+      "actualOperationCount": 28,
+      "actualRawDiffExitCounts": {
+        "1": 3,
+        "0": 4
+      },
+      "other21ActualOperations": "All exit0, empty stdout/stderr",
+      "authorActualReviewSHA256": "7d3f0c814948fded9bbfb51199f7a9a21323dabf7085b11da5603a40b2d15f50",
+      "independentRootActualReviewSHA256": "76ba8861f5615a5d135b8022bd1fcb78ed9baa1801c74a48d4199123400bb37e",
+      "importedProductionBranchFiles": [
+        {
+          "path": "backend/third_party/req/parallel_download.go",
+          "rawBytes": 13911,
+          "rawSHA256": "98d462f933c7878caaa0c6ae3bcc5792209ab6cd055e8f49e2451f7a426459c4",
+          "formattedBytes": 13923,
+          "formattedSHA256": "100a432ad16b765f1d9b33090d61ec8eb13f4f9a0183b0313e8ec94313a4fe61",
+          "import": "Exact actual artifact output bytes; no local formatter run"
+        },
+        {
+          "path": "backend/third_party/req/parallel_download_http3_cleanup_test.go",
+          "rawBytes": 12558,
+          "rawSHA256": "66d637147b24a2664d0fe87c298ba623ee6db060e21043382b8d497d9fd473d7",
+          "formattedBytes": 12562,
+          "formattedSHA256": "4c667d0cd82ffc4c1a191bb8eceacc49fc41fad2e075118e2aa52ff6ec495cd6",
+          "import": "Exact actual artifact output bytes; no local formatter run"
+        }
+      ],
+      "helperOwnership": "download_wire_peer_test.go formatted output is imported separately by root on observer infrastructure branch; not changed in this production commit.",
+      "scope": "Actual whitespace-only formatting accepted; no compiler/test/race/profile/coverage/Windows runtime PASS or PR approval."
+    },
+    "windowsProbeCalibration": {
+      "parentProductionHead": "8013f0a39e22eb023df0c352eabea6ccfaf97fb8",
+      "actualObservationRun": 39744585493,
+      "actualWindowsArtifact": 12411476184,
+      "actualArtifactSHA256": "5a9835fed2cf0e9583a33f697332cb412ed8ffe9b42fa28ccaf37a3720aae9c0",
+      "actualAuditReceiptSHA256": "e4ee160716df57024386ba138308225e013163575704f87470d01c7f5b5176f2",
+      "actualFailure": "Named/full H3 leaf failed the occupied-endpoint calibration before body release/Do/cleanup assertions; no Windows resource PASS. Both G phases35RUN/34PASS/1FAIL; original full-suite/dirty dump failures remain blocking.",
+      "windowsOracle": "Public ListenConfig.Control sets and reads back SO_EXCLUSIVEADDRUSE before actual wildcard same-port bind; require bind WSAEADDRINUSE10048 only. Independent real default wildcard UDP control must block probe while live and permit it after Close. Actual QUIC held/full/normal remote close/rebind/caller reuse assertions remain.",
+      "nonWindowsOracle": "Existing exact IPv4 peer-endpoint ListenUDP/EADDRINUSE probe retained; same live/released real wildcard control added.",
+      "primarySources": [
+        "https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse",
+        "https://raw.githubusercontent.com/golang/go/go1.26.10/src/net/sock_posix.go",
+        "https://raw.githubusercontent.com/microsoft/win32metadata/main/generation/WinSDK/RecompiledIdlHeaders/um/WinSock2.h"
+      ],
+      "ownedPathsAfterThisSource": 53,
+      "testLeavesUnchanged": true,
+      "productionAndOriginalFixtureBytesUnchanged": true,
+      "currentProbeSources": [
+        {
+          "path": "parallel_download_http3_cleanup_test.go",
+          "bytes": 13868,
+          "sha256": "b0b634b3ff59fd8ae9d828815b2984df2bf55bc9d21a0d7292308ee6cccb0174"
+        },
+        {
+          "path": "parallel_download_http3_probe_windows_test.go",
+          "bytes": 2121,
+          "sha256": "8a791aa3117f19c1fcf82d6d6bcbf236b5354cbb0a025fe16b3a0e09f3a10695"
+        },
+        {
+          "path": "parallel_download_http3_probe_other_test.go",
+          "bytes": 465,
+          "sha256": "9baa88622a909792140006e2647d71f7831a87e7667b96809e64d5dac0cdf6cc"
+        }
+      ],
+      "status": "RAW static source only; no local/87 execution or formatting; exact-head remote CI and independent source review required. No skipped test, permitted failure or coverage threshold change."
+    }
+  },
+  "parentAndWindowsContractComposition": {
+    "parentContractsSource": "b29760194991dbc88c6d2ae985a117a1e28aa4db",
+    "windowsProbeSource": "e3e46f5544c74282d3c66717cd0e5fed8c203d92",
+    "base": "8013f0a39e22eb023df0c352eabea6ccfaf97fb8",
+    "ownedPaths": 54,
+    "mandatoryLinux": 525,
+    "original502Retained": true,
+    "original32Windows33Retained": true,
+    "status": "RAW normal composition only; independent merge review and remote formatting required before actual CI. No runtime/coverage approval."
+  },
+  "defaultParallelDownloadOutputContract": {
+    "sourceBase": "17cbf851d29807fd7bf48c5791790099bb3657cc",
+    "file": "parallel_download_default_output_test.go",
+    "bytes": 4417,
+    "sha256": "69a99b55e89dd70eb9ec5999e0a868663707dcb650063fc511c0c75ef67b0615",
+    "newMandatoryLeaf": "TestReqParallelDownloadDefaultOutput/url_path_filename",
+    "mandatoryTotal": 526,
+    "prior525Retained": true,
+    "ownedPaths": 55,
+    "productionChanges": false,
+    "scope": "Actual public HTTP default output naming, path/query, truncation, complete entity/hash, neighbor preservation and temporary-work cleanup. No explicit output filename/writer/segment size/concurrency.",
+    "status": "RAW source only; independent review, remote formatting and exact-head runtime/coverage required. Existing188/222 failure and all85 gates remain blocking."
+  },
+  "originalTestAdaptations": [
+    {
+      "path": "request_test.go",
+      "originalBytes": 28340,
+      "originalSHA256": "6e673154deec01ad15fb0980b00e47376c4e32aeae7ddaa394b98add9c218dd2",
+      "candidateBytes": 29402,
+      "candidateSHA256": "97ce4e027d244dde752f4400698f32bdae76b0130726005d28bd2b4865d1f4c3",
+      "requiredTests": [
+        "TestSetFile",
+        "TestTraceInfo",
+        "TestEnableDumpToFIle"
+      ],
+      "reason": "Retain real upload/trace behavior while replacing Unix error wording with actual OS error identity and establishing real peer/public-callback elapsed prerequisites. No production timing or timeout change. Child1752 retains TestEnableDumpToFIle real request/success/nonempty dump assertions and adds optional real CloseDump plus checked same-process Remove; no failure cleanup assertion is deleted.",
+      "originalWindowsRun": 39744585493,
+      "originalWindowsArtifact": 12411476184,
+      "originalWindowsArtifactSHA256": "5a9835fed2cf0e9583a33f697332cb412ed8ffe9b42fa28ccaf37a3720aae9c0",
+      "scopeDocument": "OWNED-DUMP-CLOSE-REPAIR.md; WINDOWS-TRACE-TEST-ADAPTATION.md",
+      "status": "Original trace/upload adaptations retained. Child1752 RAW dump Close/checked Remove addition; remote formatting and exact-head execution pending."
+    },
+    {
+      "path": "client_test.go",
+      "originalBytes": 21122,
+      "originalSHA256": "3688bc3c1b9ee3410927eec79baca4f247efd5514ea7dad3057455d08f24f195",
+      "requiredTests": [
+        "TestEnableDumpAllToFile"
+      ],
+      "reason": "Retain TestEnableDumpAllToFile real POST, success and all four content assertions. Add optional real CloseDump and checked same-process Remove; OLD remains compilable and API absence is diagnostic only.",
+      "scopeDocument": "OWNED-DUMP-CLOSE-REPAIR.md",
+      "status": "Child1752 RAW source; remote formatting and exact-head execution pending.",
+      "candidateBytes": 21376,
+      "candidateSHA256": "3cfa2a3783fade7d199fc3846be0d9d2addbbec744c6ecffe6c60e7b66a48cd5"
+    }
+  ],
+  "windowsTraceTestPortability": {
+    "baseHead": "17cbf851d29807fd7bf48c5791790099bb3657cc",
+    "actualOldWindowsRun": 39744585493,
+    "originalArchiveAnd132ReferenceEntriesUnchanged": true,
+    "originalTestFiles": 14,
+    "originalSelectedTestFiles": 12,
+    "originalRetainedHelperFiles": 2,
+    "unchangedOriginalFiles": 118,
+    "productionAdaptations": 13,
+    "originalTestAdaptations": 1,
+    "currentSourceFiles": {
+      "request_test.go": {
+        "bytes": 29140,
+        "sha256": "d0068e01bc27656e00a714ee4aae60349b113a4b4a8dce9bd58a18daedb75687"
+      },
+      "trace_concurrency_test.go": {
+        "bytes": 20188,
+        "sha256": "7a7417f8591fc3cf38318ff27ba094b48776e9402b4e032290bcb8e55720f521"
+      },
+      "trace_elapsed_peer_test.go": {
+        "bytes": 12245,
+        "sha256": "4661e3c1ba9f63984736e5b455f7d0c7856f93456e945ba46bd33b5a049d2eeb"
+      },
+      "WINDOWS-TRACE-TEST-ADAPTATION.md": {
+        "bytes": 9447,
+        "sha256": "fbde0b18dec41fecd5793fc557986c6229a3d29ed38a55b709a9ac0c51c864fb"
+      }
+    },
+    "ownedFilesAfterThisSource": 57,
+    "requiredSecurityLeavesUnchanged": 526,
+    "newTestLeaves": 0,
+    "businessTimeouts": "No client/request/deadline changes; original5s fixture guard and500ms deadline retained. Clock sampling does not fabricate timestamp values.",
+    "causalOracle": "Real TLS peer; actual first fragment Flush then public GotFirstResponseByte before measured elapsed body suffix release; actual connected addresses/callbacks and body EOF/ReceivedAt. All connect/TCP durations may be zero but never negative, absent reused phases stay zero.",
+    "remoteNegativeControls": [
+      "clean",
+      "unregistered",
+      "wrong-hash",
+      "missing-selected-identity"
+    ],
+    "remoteControlsSource": "backend/tools/req-original-test-adaptation-controls.py",
+    "status": "Remote formatted by actual run40075095188 at controller9893c89cdeb5865ba8c0be23fe5c32edc4ed719c; request_test.go unchanged, two owned outputs imported exactly. Exact-head runtime and independent review remain required; no runtime PASS or waiver.",
+    "ownedTraceCasesScope": [
+      "LateDNSAfterCompletion explicit Cancel only",
+      "NormalTLSAndReuse actual fresh/reused body prerequisite",
+      "RequestReuse actual fresh/reused body prerequisite",
+      "ManualBodyEOF actual public first byte/snapshot before suffix prerequisite"
+    ],
+    "protocolReuseOracleCorrection": {
+      "afterHead": "3d1b7ccf9095a1227693e17b256b977eb31725f8",
+      "finding": "Comparing only actual response/peer protocol and branching on actual reused did not enforce the expected two modes or later same-connection reuse.",
+      "expectedProtocols": [
+        2,
+        1
+      ],
+      "expectedReusePerMode": [
+        false,
+        true,
+        true
+      ],
+      "actualIdentity": "First actual public GotConn.Conn and public server ConnContext net.Conn identities retained; later requests must reuse both exact objects, with matching reversed endpoints and no new TCP/TLS callbacks. Comparable real identities are required before interface comparison.",
+      "alpn": "Default HTTP2 requires h2 on actual client/peer TLS state; forced HTTP1 permits legal empty or http/1.1, not hardcoded http/1.1 only.",
+      "status": "Remote formatted; actual Linux/Windows original test and owned suite execution still pending."
+    },
+    "remoteFormatting": {
+      "run": 40075095188,
+      "controllerHead": "9893c89cdeb5865ba8c0be23fe5c32edc4ed719c",
+      "applicationHead": "e34056a04ab6ade971effac629b96dbb92c58b25",
+      "artifact": 12552922309,
+      "artifactSHA256": "ae9db239dbc1d25723f102d1fe553c1ead04d4caa0dca61ef76bbdc2127b10d6",
+      "go": "go1.26.10",
+      "operations": 12,
+      "originalAdaptedTestOutputUnchanged": true,
+      "runtimeApproval": false
+    }
+  },
+  "ownedDumpClose1752": {
+    "issue": "https://github.com/APIs-Gateway/sub2api/issues/1752",
+    "parentPR": "https://github.com/APIs-Gateway/sub2api/pull/1712",
+    "baseHead": "bf4dfe25dac427186ff32c93a5c9d45d89530418",
+    "currentProductionAdaptations": 16,
+    "currentOriginalTestAdaptations": 2,
+    "currentUnchangedOriginals": 114,
+    "originalArchiveAnd132ReferenceEntriesUnchanged": true,
+    "priorMandatoryLeavesRetained": 526,
+    "sourceDeclaredAdditionalLeaves": 42,
+    "requiredNewTestLeaves": [
+      "TestReqDumpOwnershipFileLifecycle/request_sync",
+      "TestReqDumpOwnershipFileLifecycle/request_manual",
+      "TestReqDumpOwnershipFileLifecycle/client_sync",
+      "TestReqDumpOwnershipFileLifecycle/client_async",
+      "TestReqDumpOwnershipCloseAndReconfigure/request",
+      "TestReqDumpOwnershipCloseAndReconfigure/client",
+      "TestReqDumpOwnershipCloneLeases/original_first",
+      "TestReqDumpOwnershipCloneLeases/clone_first",
+      "TestReqDumpOwnershipCloneLeases/disabled_clone",
+      "TestReqDumpOwnershipCloneLeases/transport_clone",
+      "TestReqDumpOwnershipConfiguredNeverSent/request",
+      "TestReqDumpOwnershipConfiguredNeverSent/client",
+      "TestReqDumpOwnershipCloseDrains/async_false",
+      "TestReqDumpOwnershipCloseDrains/async_true",
+      "TestReqDumpOwnershipCallerFiles/request",
+      "TestReqDumpOwnershipCallerFiles/client",
+      "TestReqDumpOwnershipCallerFiles/transport",
+      "TestReqDumpOwnershipRetarget/file_to_file",
+      "TestReqDumpOwnershipRetarget/file_to_caller",
+      "TestReqDumpOwnershipRetarget/same_path",
+      "TestReqDumpOwnershipRetarget/hardlink_with_clone",
+      "TestReqDumpOwnershipRetarget/failed_client_open",
+      "TestReqDumpOwnershipRetarget/failed_request_open",
+      "TestReqDumpOwnershipOptionsRetarget/request",
+      "TestReqDumpOwnershipOptionsRetarget/client",
+      "TestReqDumpOwnershipOptionsRetarget/transport",
+      "TestReqDumpOwnershipRetargetRetiresCallbacks/request",
+      "TestReqDumpOwnershipRetargetRetiresCallbacks/client",
+      "TestReqDumpOwnershipConcurrentClose/request",
+      "TestReqDumpOwnershipConcurrentClose/client",
+      "TestReqDumpOwnershipConcurrentClose/transport",
+      "TestReqDumpOwnershipWindowsCalibration",
+      "TestReqDumpOwnershipCloseBeforeManualBody",
+      "TestReqDumpOwnershipDisableRetainsFile",
+      "TestReqDumpOwnershipRetryAndReuse",
+      "TestReqDumpOwnershipCancellation",
+      "TestReqDumpOwnershipParallelRecoveryClone",
+      "TestReqDumpOwnershipManualSuffixAfterDo",
+      "TestReqDumpOwnershipMultipleOutputs",
+      "TestReqDumpOwnershipCurrentFileIdentity",
+      "TestReqDumpOwnershipBodyError",
+      "TestReqDumpOwnershipRetargetKeepsOtherClone"
+    ],
+    "actualNewLeavesRun": null,
+    "newOwnedPaths": [
+      "dump_ownership_contract_test.go",
+      "dump_ownership_peer_test.go",
+      "OWNED-DUMP-CLOSE-REPAIR.md"
+    ],
+    "newlyAdaptedProductionPaths": [
+      "client.go",
+      "dump.go",
+      "transport.go"
+    ],
+    "updatedProductionPaths": [
+      "request.go",
+      "internal/dump/dump.go",
+      "parallel_download.go"
+    ],
+    "originalTestRequiredIdentities": {
+      "request_test.go": [
+        "TestSetFile",
+        "TestTraceInfo",
+        "TestEnableDumpToFIle"
+      ],
+      "client_test.go": [
+        "TestEnableDumpAllToFile"
+      ]
+    },
+    "sourceStatus": "Remote formatter output imported at e728e3e78. Subsequent narrow peer-fixture resource witness logs require exact-head independent review and remote formatting/runtime evidence; no local/87 execution or new PASS. Original 42 leaves/assertions and all16x85 gates retained.",
+    "closeErrorLimit": "Actual file close errors are joined/stored and returned idempotently; no portable deterministic filesystem close-error fixture and no fabricated PASS.",
+    "windowsObservationLimit": "Original40182645563 passed526 leaves but left2dump files; ignored Remove results mean no original same-process sharing-violation witness. New same-fixture calibrated actual Remove OLD/NEW still required.",
+    "formatEvidence": {
+      "run": 40617280088,
+      "controller": "2a8948c926ad3db2fab459106411c1e4c12fc2ec",
+      "sourceHead": "e1b71933de5e6d0c1124576ce98d5594a5c3d050",
+      "sourceTree": "85144f1b7cf7a582943571b4e596cd4b54b4e211",
+      "artifact": 12786280636,
+      "artifactBytes": 30729347,
+      "artifactSHA256": "5098cd4e07caee874730bf6588c5921ff1a7551d87afeb7b6057c8b923b2f6b0",
+      "toolchain": "go1.26.10 linux/amd64",
+      "inputFiles": 11,
+      "actualOperations": 44,
+      "rootIndependentReceiptSHA256": "59e61cc806324b8a7e61c5899dc8759a7e1d8c98412c085e0922fa8d3f522e6c",
+      "scope": "Full tracked4523/4524 inputs and archives unchanged; strict actual exits/bytes verified. Formatting only, no runtimePASS."
+    },
+    "resourceWitnessMarkers": {
+      "actualRemoveSuccess": "DUMP1752_RESOURCE_REMOVE_OK operation=remove",
+      "actualRemoveTypedError": "DUMP1752_RESOURCE_REMOVE_ERR type=%T operation=%s errno=%d",
+      "failureAssertionRetained": "DUMP1752_RESOURCE_REMOVE: %T %v",
+      "scope": "Log only after actual os.Remove result; errors.As reports real PathError/errno. OLD may claim resourceRED only for actual Windows5/32 after real wire/output and calibrated Create/Close/Remove. Linux unlink success is not descriptor-close evidence."
+    }
+  },
+  "http2ReceiveFlowContracts": {
+    "baseHead": "6cbaddae9795d6a46c752e20fffd68fac2b49aa2",
+    "officialSource": "https://github.com/golang/net/blob/v0.48.0/http2/transport_test.go",
+    "officialBytes": 164358,
+    "officialSHA256": "a7592ef60371241ef909b01f6c3887e5180210e5fac0ad177ef59a4e935978cb",
+    "license": "LICENSE-GO-BSD",
+    "newFiles": {
+      "internal/http2/receive_flow_contract_test.go": {
+        "bytes": 13697,
+        "sha256": "307939900113a97b360202b6d17e35a3b784d26019ffd2967d7dae1396007a70"
+      },
+      "internal/http2/RECEIVE-FLOW-CONTRACTS.md": {
+        "bytes": 10137,
+        "sha256": "d276b0fa098e7349a5acda9002d8778725073922ef8a85637b4766608bcd49d4"
+      }
+    },
+    "leaves": [
+      "TestReqHTTP2ReceiveFlowContract_UnreadRefund/single_frame",
+      "TestReqHTTP2ReceiveFlowContract_UnreadRefund/late_frame_after_cancel",
+      "TestReqHTTP2ReceiveFlowContract_PaddedData/read_to_eof",
+      "TestReqHTTP2ReceiveFlowContract_PaddedData/read_one_then_close",
+      "TestReqHTTP2ReceiveFlowContract_PaddedData/close_unread",
+      "TestReqHTTP2ReceiveFlowContract_DataBeforeHeaders"
+    ],
+    "scope": "Tests only, real private ClientConn byte-stream/body/frame contract; not TCP/TLS deployment proof. No production or counter/denominator/gate change. Original base468 mandatory inventory unchanged; separately register six actual leaves in reviewed remote composition before acceptance.",
+    "status": "Remote formatter output imported; no local/87 project/format/syntax/test/build execution. Independent source review and exact-head remote CI remain required; no protocol/race/85 PASS.",
+    "formatEvidence": {
+      "run": 40255136055,
+      "workflowHead": "63dcbd3aa4b2d033694aa8728dcfcfca0776b0f5",
+      "sourceCandidate": "cf6ccbb4389edf4bae86e81438c87abf607289bb",
+      "artifact": 12621803677,
+      "artifactBytes": 31077477,
+      "artifactSHA256": "297bbd3f7e9b7c9a1329ce253cf1a882b6f65cfc2d4b266693c7d83ee0a17664",
+      "toolchain": "go1.26.10 linux/amd64",
+      "actualOperationExits": {
+        "raw-diff": 1,
+        "write-copy": 0,
+        "formatted-diff": 0,
+        "formatted-list": 0
+      },
+      "rawTestBytes": 13355,
+      "rawTestSHA256": "f8014478e8f8dd86fc9e18691aab46db06aaea87644d63849362a5ef76d29234",
+      "authorActualReceiptSHA256": "3c7786e8d9809521928ed61043c3c32a297a3ef572ded87c5b07cd5a623e2548",
+      "independentRootActualReceiptSHA256": "ec380e8d45d02bfd1c760e6898f7ebd13e12c7f37210a2e15f85fff86a043cb0",
+      "status": "Actual one-Go formatter output independently verified and imported verbatim. No runtime/race/build/coverage PASS; six leaves still need exact-head remote evidence."
+    },
+    "executionDependency": "Official behavioral source and nested req/go.mod declare x/net v0.48.0; execution must use backend main MVS (declares v0.60.0), with actual go-list evidence for selected peer codec. Do not execute the nested module as a substitute."
+  },
+  "customTLSOwnershipContracts": {
+    "existingPR": "https://github.com/APIs-Gateway/sub2api/pull/1712",
+    "reviewFinding": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6446970791",
+    "upstreamPR": "https://github.com/imroc/req/pull/547",
+    "upstreamHead": "82b9729893406adca3911020a0a1213546446293",
+    "authorization": "User explicitly authorized only this reachable H1/H2 timeout/handshake shared-connection race reproduction and repair within existing PR1712 on 2026-10-28. No new issue/PR or unrelated req547 changes.",
+    "sourceHead": "5b1c1fa77eca2168c51dcdc4ad5178dada1a206e",
+    "sourceTree": "cd657ffdd3e6ade2a6bde5f9b204aec8243254a6",
+    "compositionBase": "b9f84ecacf4d8bfb4c84eabc2ce346807dd1c866",
+    "independentSourceReview": {
+      "receipt": "custom-tls-race-1712-oct28/INDEPENDENT-ROOT-5B1C1FA77-SOURCE-REVIEW.json",
+      "sha256": "3ad8e7b2bc2b26d3c1489e71909b6a51fd02fbe7d1a64af0fa6b71ee1e1736a7",
+      "scope": "Independent static source review only; no runtime/formatter PASS or whole-PR LGTM."
+    },
+    "sourceInventorySHA256": "2b3acb3539c6aa9e5a86856f21d6d3d99692fa81953a560a142fb0b65f05061a",
+    "newOwnedPaths": [
+      "custom_tls_handshake_peer_test.go",
+      "custom_tls_handshake_test.go",
+      "custom_tls_handshake_boundary_test.go",
+      "internal/http2/custom_tls_handshake_peer_test.go",
+      "internal/http2/custom_tls_handshake_test.go",
+      "CUSTOM-TLS-OWNERSHIP-REPAIR.md"
+    ],
+    "newFiles": {
+      "custom_tls_handshake_peer_test.go": {
+        "bytes": 4096,
+        "sha256": "3bcec75f5164e0efcb0f86aa6e1e35857f2d8211d80ca95120d2c093af7d401b"
+      },
+      "custom_tls_handshake_test.go": {
+        "bytes": 7617,
+        "sha256": "4ce46f6b1edef1172ee3ede6cfe5735e8947545705705398f0602d635c00d999"
+      },
+      "custom_tls_handshake_boundary_test.go": {
+        "bytes": 9419,
+        "sha256": "159641ae9df4de70f0c39d4fa07934d88280165adaf79bce62cdda0e0ac62419"
+      },
+      "internal/http2/custom_tls_handshake_peer_test.go": {
+        "bytes": 3726,
+        "sha256": "6121032f5593da00a43a65ae341aa1e405b8c46341c693faea209011756a7626"
+      },
+      "internal/http2/custom_tls_handshake_test.go": {
+        "bytes": 9379,
+        "sha256": "c778bb6009f452e9251896396f2ce04b0a6c3516bc5b89d965dadbaa77438f63"
+      },
+      "CUSTOM-TLS-OWNERSHIP-REPAIR.md": {
+        "bytes": 5339,
+        "sha256": "ee4f4e01358c150db1691cfbf7a4743093cae8ede56c6a7702c651731996f7c9"
+      }
+    },
+    "productionPaths": [
+      "transport.go",
+      "internal/http2/transport.go"
+    ],
+    "rootPackage": "github.com/imroc/req/v3",
+    "rootCount": 18,
+    "rootLeaves": [
+      "TestReqCustomTLS_PublicSuccessAndReuse/HTTP1",
+      "TestReqCustomTLS_PublicSuccessAndReuse/HTTP2",
+      "TestReqCustomTLS_LatePublicationRace/HTTP1",
+      "TestReqCustomTLS_LatePublicationRace/HTTP2",
+      "TestReqCustomTLS_LateDistinctConnection/HTTP1",
+      "TestReqCustomTLS_LateDistinctConnection/HTTP2",
+      "TestReqCustomTLS_Boundaries/NoTimeoutSuccess",
+      "TestReqCustomTLS_Boundaries/CallbackError",
+      "TestReqCustomTLS_Boundaries/ParentCanceled",
+      "TestReqCustomTLS_Boundaries/ParentDeadline",
+      "TestReqCustomTLS_Boundaries/HandshakeTimeout",
+      "TestReqCustomTLS_Boundaries/LateError",
+      "TestReqCustomTLS_Boundaries/SlowStart",
+      "TestReqCustomTLS_Boundaries/ExpiredBeforeStart",
+      "TestReqCustomTLS_Boundaries/SlowDoneSuccess",
+      "TestReqCustomTLS_Boundaries/NilConnection",
+      "TestReqCustomTLS_Boundaries/TypedNilConnection",
+      "TestReqCustomTLS_Boundaries/NilState"
+    ],
+    "privateHTTP2Package": "github.com/imroc/req/v3/internal/http2",
+    "privateHTTP2Count": 13,
+    "privateHTTP2Leaves": [
+      "TestReqCustomTLS_Boundaries/NoTimeoutSuccess",
+      "TestReqCustomTLS_Boundaries/CallbackError",
+      "TestReqCustomTLS_Boundaries/ParentCanceled",
+      "TestReqCustomTLS_Boundaries/ParentDeadline",
+      "TestReqCustomTLS_Boundaries/HandshakeTimeout",
+      "TestReqCustomTLS_Boundaries/LateError",
+      "TestReqCustomTLS_Boundaries/SlowStart",
+      "TestReqCustomTLS_Boundaries/ExpiredBeforeStart",
+      "TestReqCustomTLS_Boundaries/SlowDoneSuccess",
+      "TestReqCustomTLS_Boundaries/NilConnection",
+      "TestReqCustomTLS_Boundaries/TypedNilConnection",
+      "TestReqCustomTLS_Boundaries/NilState",
+      "TestReqCustomTLS_Boundaries/NonTLSConnection"
+    ],
+    "additionalSourceLeafCount": 31,
+    "priorMandatoryLeaves": 574,
+    "composedMandatoryLeaves": 605,
+    "sourceStatus": "Source identities only, NOTRUN. Exact c11 source was formatted only on remote CI run40726740668, controller6866de3b; four changed fixture outputs imported verbatim. No compiler/test/race/Windows/coverage runtime evidence is asserted.",
+    "requiredRemoteEvidence": [
+      "Identical public LatePublicationRace HTTP1/HTTP2 fixture on OLD must show genuine handshake prerequisites and actual old shared-connection race frames; compiler/setup/watchdog failures are not race reproduction.",
+      "NEW exact-head605 named and full race suites, actual four adapted original test completions, late wrapper/distinct connection/trace cleanup.",
+      "Actual Windows calibrated Remove OLD/NEW resource evidence and no generated residue.",
+      "All four original atomic profiles, both original85 gates and all16 production per-file85 gates, without profile/count/denominator mixing."
+    ],
+    "scope": "Only reachable custom TLS terminal ownership, cancellation, timeout, late-result connection disposal and ordered trace hooks. Preserve default TLS paths, headers, transport pool/business policy, original132 rows and114/16/2 partition.",
+    "remoteFormatterEvidence": {
+      "run": "https://github.com/APIs-Gateway/sub2api/actions/runs/40726740668",
+      "runId": 40726740668,
+      "runAttempt": 1,
+      "jobId": 122951921850,
+      "artifactId": 12833411062,
+      "artifactZIPBytes": 30862362,
+      "artifactZIPSHA256": "ec354956a3070a48b8bc572d2ecb8f3cfc668f263b1a05b2e54e38f51c578616",
+      "sourceHead": "c11eb4e1c01a66e91ca81b59901fa779dfadbf1a",
+      "sourceTree": "6d7c0592a337d97e15949a25676e50aae4637caa",
+      "controllerHead": "6866de3bd7b18a5c85cf145b12d046835fe4c76e",
+      "controllerTree": "a2e32c69d98f35dee95dad4a1bb054f2e0592e82",
+      "goVersion": "go version go1.26.10 linux/amd64",
+      "actualInputFiles": 17,
+      "actualOperations": 68,
+      "rawUnchangedExit0Empty": 13,
+      "rawChangedExit1Diff": 4,
+      "otherOperationsExit0Empty": 51,
+      "sourceTrackedFiles": 4529,
+      "controllerTrackedFiles": 4530,
+      "fullInputSnapshotsAndArchives": "All tracked paths/modes/Git blobs/SHA256/bytes independently matched exact source/controller Git trees and complete tar archives; before/after snapshots identical.",
+      "auditReceipt": "custom-tls-race-1712-oct28/remote-formatter-6866de3b/SEALED-ACTUAL-FORMATTER17-AUDIT.json",
+      "auditSHA256": "dcc250967e9a5ba527cb586b0a5b197c3b4ff20663ea7f8d59ff79e1506999e2",
+      "importedFormattedFiles": [
+        {
+          "path": "custom_tls_handshake_peer_test.go",
+          "rawBytes": 4058,
+          "rawSHA256": "928256488b579f8c8a787c7f0a62ebc74d543a1c0c6dc8d5a7160292351229da",
+          "formattedBytes": 4096,
+          "formattedSHA256": "3bcec75f5164e0efcb0f86aa6e1e35857f2d8211d80ca95120d2c093af7d401b"
+        },
+        {
+          "path": "custom_tls_handshake_boundary_test.go",
+          "rawBytes": 9416,
+          "rawSHA256": "62cec3f6f4fafd512fc6a5e4ae2fd3ed336b28196560b56a00ce10f9d9b130d9",
+          "formattedBytes": 9419,
+          "formattedSHA256": "159641ae9df4de70f0c39d4fa07934d88280165adaf79bce62cdda0e0ac62419"
+        },
+        {
+          "path": "internal/http2/custom_tls_handshake_peer_test.go",
+          "rawBytes": 3688,
+          "rawSHA256": "ec5fa20281f1322243cca74a53a9e7e1e6582c1b7c41327df7050a05eb44bcae",
+          "formattedBytes": 3726,
+          "formattedSHA256": "6121032f5593da00a43a65ae341aa1e405b8c46341c693faea209011756a7626"
+        },
+        {
+          "path": "internal/http2/custom_tls_handshake_test.go",
+          "rawBytes": 9376,
+          "rawSHA256": "51ed07bdab46f6ebf56ab8a23dbe106d7f32e18132fb2a4f277a2fd1b5ff93a8",
+          "formattedBytes": 9379,
+          "formattedSHA256": "c778bb6009f452e9251896396f2ce04b0a6c3516bc5b89d965dadbaa77438f63"
+        }
+      ],
+      "status": "Actual remote formatting evidence only; no local/87 executable validation. Import changes only fixture alignment/trailing blank lines. All605 named identities, four original profiles, original four adapted tests, sixteen production per-file85 and both original85 gates remain required."
+    }
+  },
+  "additionalCoverageContracts880": {
+    "existingPR": "https://github.com/APIs-Gateway/sub2api/pull/1712",
+    "permanentTrackingIssue": "https://github.com/APIs-Gateway/sub2api/issues/291",
+    "sourceUnion": "ae7260bba43cc8ed07db94513a42b73e5b9d104b",
+    "legacyNamedLeaves": 605,
+    "additionalNamedLeaves": 275,
+    "totalNamedLeaves": 880,
+    "groups": [
+      {
+        "kind": "publicAPI",
+        "package": "github.com/imroc/req/v3",
+        "count": 70,
+        "leaves": [
+          "TestReqPublicAPI_QueryConstruction/common_multivalue",
+          "TestReqPublicAPI_QueryConstruction/common_struct",
+          "TestReqPublicAPI_QueryConstruction/request_multivalue",
+          "TestReqPublicAPI_QueryConstruction/request_struct",
+          "TestReqPublicAPI_QueryConstruction/invalid_common_preserves_valid",
+          "TestReqPublicAPI_QueryConstruction/independent_builders",
+          "TestReqPublicAPI_EntitySemantics/reader",
+          "TestReqPublicAPI_EntitySemantics/bytes",
+          "TestReqPublicAPI_EntitySemantics/string",
+          "TestReqPublicAPI_EntitySemantics/json_literal_string",
+          "TestReqPublicAPI_EntitySemantics/json_literal_bytes",
+          "TestReqPublicAPI_EntitySemantics/xml_literal_string",
+          "TestReqPublicAPI_EntitySemantics/xml_literal_bytes",
+          "TestReqPublicAPI_EntitySemantics/xml_object",
+          "TestReqPublicAPI_EntitySemantics/custom_content_type",
+          "TestReqPublicAPI_EntitySemantics/get_payload_disabled_then_enabled",
+          "TestReqPublicAPI_ResultCodecs/deprecated_success_alias",
+          "TestReqPublicAPI_ResultCodecs/deprecated_error_alias",
+          "TestReqPublicAPI_ResultCodecs/common_error_type",
+          "TestReqPublicAPI_ResultCodecs/custom_result_state",
+          "TestReqPublicAPI_ResultCodecs/json_marshal_error",
+          "TestReqPublicAPI_ResultCodecs/xml_marshal_error",
+          "TestReqPublicAPI_ResultCodecs/json_unmarshal_error",
+          "TestReqPublicAPI_ResultCodecs/xml_unmarshal_error",
+          "TestReqPublicAPI_ResultCodecs/body_transformer",
+          "TestReqPublicAPI_MiddlewarePolicies/wrapper_composition",
+          "TestReqPublicAPI_MiddlewarePolicies/before_error_blocks_wire",
+          "TestReqPublicAPI_MiddlewarePolicies/after_error_preserves_response",
+          "TestReqPublicAPI_MiddlewarePolicies/dial_error_identity",
+          "TestReqPublicAPI_MiddlewarePolicies/pre_canceled",
+          "TestReqPublicAPI_MiddlewarePolicies/jar_clear",
+          "TestReqPublicAPI_MiddlewarePolicies/redirect_denied",
+          "TestReqPublicAPI_MiddlewarePolicies/manual_read_and_reenable",
+          "TestReqPublicAPI_RetryReplay/common_fixed",
+          "TestReqPublicAPI_RetryReplay/request_custom_interval",
+          "TestReqPublicAPI_RetryReplay/request_backoff",
+          "TestReqPublicAPI_RetryReplay/request_zero_overrides_common",
+          "TestReqPublicAPI_FormsAndFiles/ordered_fields",
+          "TestReqPublicAPI_FormsAndFiles/typed_form_values",
+          "TestReqPublicAPI_FormsAndFiles/common_repeated_form",
+          "TestReqPublicAPI_FormsAndFiles/file_reader",
+          "TestReqPublicAPI_FormsAndFiles/file_bytes",
+          "TestReqPublicAPI_FormsAndFiles/file_path_map",
+          "TestReqPublicAPI_FormsAndFiles/file_upload",
+          "TestReqPublicAPI_FormsAndFiles/missing_file",
+          "TestReqPublicAPI_DownloadDestinations/caller_writer",
+          "TestReqPublicAPI_DownloadDestinations/relative_output_file",
+          "TestReqPublicAPI_DumpVisibility/client_all",
+          "TestReqPublicAPI_DumpVisibility/client_async",
+          "TestReqPublicAPI_DumpVisibility/client_headers",
+          "TestReqPublicAPI_DumpVisibility/client_bodies",
+          "TestReqPublicAPI_DumpVisibility/client_request_only",
+          "TestReqPublicAPI_DumpVisibility/client_response_only",
+          "TestReqPublicAPI_DumpVisibility/client_without_upload",
+          "TestReqPublicAPI_DumpVisibility/client_without_download",
+          "TestReqPublicAPI_DumpVisibility/each_all",
+          "TestReqPublicAPI_DumpVisibility/each_headers",
+          "TestReqPublicAPI_DumpVisibility/each_bodies",
+          "TestReqPublicAPI_DumpVisibility/each_request_only",
+          "TestReqPublicAPI_DumpVisibility/each_response_only",
+          "TestReqPublicAPI_DumpVisibility/each_without_upload",
+          "TestReqPublicAPI_DumpVisibility/each_without_download",
+          "TestReqPublicAPI_DumpVisibility/request_all",
+          "TestReqPublicAPI_DumpVisibility/request_headers",
+          "TestReqPublicAPI_DumpVisibility/request_bodies",
+          "TestReqPublicAPI_DumpVisibility/request_request_only",
+          "TestReqPublicAPI_DumpVisibility/request_response_only",
+          "TestReqPublicAPI_DumpVisibility/request_without_upload",
+          "TestReqPublicAPI_DumpVisibility/request_without_download",
+          "TestReqPublicAPI_DumpVisibility/request_options"
+        ]
+      },
+      {
+        "kind": "http1Boundary",
+        "package": "github.com/imroc/req/v3",
+        "count": 33,
+        "leaves": [
+          "TestReqH1Boundary_PreflightOwnership/nil_url",
+          "TestReqH1Boundary_PreflightOwnership/header_name",
+          "TestReqH1Boundary_PreflightOwnership/header_value_redacted",
+          "TestReqH1Boundary_PreflightOwnership/trailer_name",
+          "TestReqH1Boundary_PreflightOwnership/trailer_value_redacted",
+          "TestReqH1Boundary_PreflightOwnership/unsupported_scheme",
+          "TestReqH1Boundary_PreflightOwnership/invalid_method",
+          "TestReqH1Boundary_PreflightOwnership/missing_host",
+          "TestReqH1Boundary_PreflightOwnership/already_canceled",
+          "TestReqH1Boundary_PreflightOwnership/proxy_error",
+          "TestReqH1Boundary_PreflightOwnership/dial_error",
+          "TestReqH1Boundary_PreflightOwnership/nil_custom_tls",
+          "TestReqH1Boundary_HeaderParsing/fold_and_repeat",
+          "TestReqH1Boundary_HeaderParsing/trim_horizontal_space",
+          "TestReqH1Boundary_HeaderParsing/missing_colon",
+          "TestReqH1Boundary_HeaderParsing/leading_continuation",
+          "TestReqH1Boundary_HeaderParsing/nul_field_name",
+          "TestReqH1Boundary_HeaderParsing/nul_field_value",
+          "TestReqH1Boundary_HeaderParsing/header_count_bound",
+          "TestReqH1Boundary_HeaderParsing/memory_bound",
+          "TestReqH1Boundary_HeadlessStatusFraming/head_length_metadata",
+          "TestReqH1Boundary_HeadlessStatusFraming/head_chunked_metadata",
+          "TestReqH1Boundary_HeadlessStatusFraming/no_content",
+          "TestReqH1Boundary_HeadlessStatusFraming/not_modified",
+          "TestReqH1Boundary_HeadlessStatusFraming/informational",
+          "TestReqH1Boundary_HeadlessStatusFraming/zero_length",
+          "TestReqH1Boundary_ResponseBodySignals/sticky_error_and_one_notification",
+          "TestReqH1Boundary_ResponseBodySignals/early_close_owns_cleanup_once",
+          "TestReqH1Boundary_ResponseBodySignals/eof_completes_instead_of_early_close",
+          "TestReqH1Boundary_GzipReader/valid_and_closed",
+          "TestReqH1Boundary_GzipReader/invalid_header_sticky",
+          "TestReqH1Boundary_GzipReader/truncated_header",
+          "TestReqH1Boundary_GzipReader/corrupt_checksum"
+        ]
+      },
+      {
+        "kind": "publicDefault",
+        "package": "github.com/imroc/req/v3",
+        "count": 6,
+        "leaves": [
+          "TestReqPublicDefaultContract/replacement_binds_new_calls_only",
+          "TestReqPublicDefaultContract/escaped_path_query_and_header_precedence",
+          "TestReqPublicDefaultContract/form_auth_and_cookie_wire",
+          "TestReqPublicDefaultContract/json_request_and_success_result",
+          "TestReqPublicDefaultContract/http_error_result_preserves_body",
+          "TestReqPublicDefaultContract/context_cancellation_reaches_peer"
+        ]
+      },
+      {
+        "kind": "bisectContract",
+        "package": "github.com/imroc/req/v3/internal/bisect",
+        "count": 112,
+        "leaves": [
+          "TestReqBisectContract_Matcher/nil",
+          "TestReqBisectContract_Matcher/all",
+          "TestReqBisectContract_Matcher/none",
+          "TestReqBisectContract_Matcher/negate_all",
+          "TestReqBisectContract_Matcher/even",
+          "TestReqBisectContract_Matcher/odd",
+          "TestReqBisectContract_Matcher/union",
+          "TestReqBisectContract_Matcher/leading_plus",
+          "TestReqBisectContract_Matcher/subtract",
+          "TestReqBisectContract_Matcher/leading_minus",
+          "TestReqBisectContract_Matcher/universe_minus",
+          "TestReqBisectContract_Matcher/negated_union",
+          "TestReqBisectContract_Matcher/double_negation",
+          "TestReqBisectContract_Matcher/negated_none",
+          "TestReqBisectContract_Matcher/hex_lower",
+          "TestReqBisectContract_Matcher/hex_upper",
+          "TestReqBisectContract_Matcher/mixed_hex_binary",
+          "TestReqBisectContract_Matcher/hex_subtract",
+          "TestReqBisectContract_Matcher/hex_full_width",
+          "TestReqBisectContract_Matcher/binary_full_width",
+          "TestReqBisectContract_Matcher/quiet_all",
+          "TestReqBisectContract_Matcher/quiet_none",
+          "TestReqBisectContract_Matcher/verbose_all",
+          "TestReqBisectContract_Matcher/repeated_verbose",
+          "TestReqBisectContract_Matcher/quiet_then_verbose",
+          "TestReqBisectContract_Matcher/quiet_verbose_none",
+          "TestReqBisectContract_InvalidPattern/quiet_only",
+          "TestReqBisectContract_InvalidPattern/verbose_only",
+          "TestReqBisectContract_InvalidPattern/negation_only",
+          "TestReqBisectContract_InvalidPattern/repeated_verbose_only",
+          "TestReqBisectContract_InvalidPattern/double_negation_only",
+          "TestReqBisectContract_InvalidPattern/quiet_verbose_only",
+          "TestReqBisectContract_InvalidPattern/invalid_digit",
+          "TestReqBisectContract_InvalidPattern/invalid_letter",
+          "TestReqBisectContract_InvalidPattern/hex_missing",
+          "TestReqBisectContract_InvalidPattern/hex_invalid",
+          "TestReqBisectContract_InvalidPattern/plus_after_minus",
+          "TestReqBisectContract_InvalidPattern/empty_added_term",
+          "TestReqBisectContract_InvalidPattern/empty_subtracted_term",
+          "TestReqBisectContract_InvalidPattern/trailing_operator",
+          "TestReqBisectContract_InvalidPattern/y_followed_bit",
+          "TestReqBisectContract_InvalidPattern/whitespace",
+          "TestReqBisectContract_InvalidPattern/binary_too_long",
+          "TestReqBisectContract_InvalidPattern/hex_too_long",
+          "TestReqBisectContract_HashEncoding/empty",
+          "TestReqBisectContract_HashEncoding/empty_string",
+          "TestReqBisectContract_HashEncoding/empty_slices",
+          "TestReqBisectContract_HashEncoding/unicode_string",
+          "TestReqBisectContract_HashEncoding/byte",
+          "TestReqBisectContract_HashEncoding/signed_int",
+          "TestReqBisectContract_HashEncoding/unsigned_int",
+          "TestReqBisectContract_HashEncoding/signed_int32",
+          "TestReqBisectContract_HashEncoding/unsigned_int32",
+          "TestReqBisectContract_HashEncoding/signed_int64",
+          "TestReqBisectContract_HashEncoding/unsigned_int64",
+          "TestReqBisectContract_HashEncoding/uintptr",
+          "TestReqBisectContract_HashEncoding/strings_slice",
+          "TestReqBisectContract_HashEncoding/bytes_slice",
+          "TestReqBisectContract_HashEncoding/int_slice",
+          "TestReqBisectContract_HashEncoding/uint_slice",
+          "TestReqBisectContract_HashEncoding/int32_slice",
+          "TestReqBisectContract_HashEncoding/uint32_slice",
+          "TestReqBisectContract_HashEncoding/int64_slice",
+          "TestReqBisectContract_HashEncoding/uint64_slice",
+          "TestReqBisectContract_HashEncoding/uintptr_slice",
+          "TestReqBisectContract_HashEncoding/mixed",
+          "TestReqBisectContract_HashUnsupported/bool",
+          "TestReqBisectContract_HashUnsupported/float",
+          "TestReqBisectContract_HashUnsupported/struct",
+          "TestReqBisectContract_HashUnsupported/slice",
+          "TestReqBisectContract_HashUnsupported/nil",
+          "TestReqBisectContract_MarkerFormat/zero",
+          "TestReqBisectContract_MarkerFormat/one",
+          "TestReqBisectContract_MarkerFormat/mixed",
+          "TestReqBisectContract_MarkerFormat/max",
+          "TestReqBisectContract_MarkerWriterError",
+          "TestReqBisectContract_CutMarker/plain",
+          "TestReqBisectContract_CutMarker/prefix_fragment",
+          "TestReqBisectContract_CutMarker/missing_close",
+          "TestReqBisectContract_CutMarker/empty_binary",
+          "TestReqBisectContract_CutMarker/binary_zero",
+          "TestReqBisectContract_CutMarker/binary_one",
+          "TestReqBisectContract_CutMarker/binary_mixed",
+          "TestReqBisectContract_CutMarker/binary_upper_limit",
+          "TestReqBisectContract_CutMarker/binary_overflow",
+          "TestReqBisectContract_CutMarker/invalid_binary_digit",
+          "TestReqBisectContract_CutMarker/hex_zero",
+          "TestReqBisectContract_CutMarker/hex_mixed",
+          "TestReqBisectContract_CutMarker/hex_uppercase",
+          "TestReqBisectContract_CutMarker/hex_max",
+          "TestReqBisectContract_CutMarker/hex_overflow",
+          "TestReqBisectContract_CutMarker/space_before",
+          "TestReqBisectContract_CutMarker/space_after",
+          "TestReqBisectContract_CutMarker/spacing_both",
+          "TestReqBisectContract_CutMarker/first_of_two",
+          "TestReqBisectContract_CutMarker/unicode_surround",
+          "TestReqBisectContract_FileLine/nil",
+          "TestReqBisectContract_FileLine/marker_zero",
+          "TestReqBisectContract_FileLine/verbose_positive",
+          "TestReqBisectContract_FileLine/verbose_negative",
+          "TestReqBisectContract_FileLine/verbose_zero",
+          "TestReqBisectContract_FileLine/quiet",
+          "TestReqBisectContract_FileLine/excluded",
+          "TestReqBisectContract_FileLine/disabled_all",
+          "TestReqBisectContract_StackReports/nil",
+          "TestReqBisectContract_StackReports/quiet",
+          "TestReqBisectContract_StackReports/excluded",
+          "TestReqBisectContract_StackReports/marker_dedup_same_site",
+          "TestReqBisectContract_StackReports/verbose_dedup_same_site",
+          "TestReqBisectContract_StackReports/disabled_marker",
+          "TestReqBisectContract_StackReports/concurrent_verbose",
+          "TestReqBisectContract_StackReports/concurrent_marker_lossy"
+        ]
+      },
+      {
+        "kind": "http2Coverage",
+        "package": "github.com/imroc/req/v3/internal/http2",
+        "count": 51,
+        "leaves": [
+          "TestReqHTTP2CoverageContract_RequestAdmission/invalid_header_name",
+          "TestReqHTTP2CoverageContract_RequestAdmission/invalid_header_value",
+          "TestReqHTTP2CoverageContract_RequestAdmission/invalid_trailer_name",
+          "TestReqHTTP2CoverageContract_RequestAdmission/invalid_trailer_value",
+          "TestReqHTTP2CoverageContract_RequestAdmission/invalid_host",
+          "TestReqHTTP2CoverageContract_RequestAdmission/invalid_opaque_path",
+          "TestReqHTTP2CoverageContract_RequestAdmission/peer_header_list_limit",
+          "TestReqHTTP2CoverageContract_RequestAdmission/forbidden_connection_header",
+          "TestReqHTTP2CoverageContract_HeaderWire/pseudo_order",
+          "TestReqHTTP2CoverageContract_HeaderWire/ordinary_header_order",
+          "TestReqHTTP2CoverageContract_HeaderWire/cookie_split",
+          "TestReqHTTP2CoverageContract_HeaderWire/connect_authority_only",
+          "TestReqHTTP2CoverageContract_ExpectContinue/continue_releases_body",
+          "TestReqHTTP2CoverageContract_ExpectContinue/final_rejection_never_reads_body",
+          "TestReqHTTP2CoverageContract_ExpectContinue/cancel_before_continue",
+          "TestReqHTTP2CoverageContract_ExpectContinue/deadline_before_continue",
+          "TestReqHTTP2CoverageContract_ExpectContinue/continue_timeout_releases_body",
+          "TestReqHTTP2CoverageContract_Informational/early_hints_then_final",
+          "TestReqHTTP2CoverageContract_Informational/trace_error_is_stream_cause",
+          "TestReqHTTP2CoverageContract_Informational/end_stream_1xx_rejected",
+          "TestReqHTTP2CoverageContract_Informational/missing_status_rejected",
+          "TestReqHTTP2CoverageContract_Informational/nonnumeric_status_rejected",
+          "TestReqHTTP2CoverageContract_ResponseEntity/end_headers_missing_body",
+          "TestReqHTTP2CoverageContract_ResponseEntity/body_shorter_than_declared",
+          "TestReqHTTP2CoverageContract_ResponseEntity/body_longer_than_declared",
+          "TestReqHTTP2CoverageContract_ResponseEntity/head_rejects_data",
+          "TestReqHTTP2CoverageContract_AutoDecompression/implicit_gzip",
+          "TestReqHTTP2CoverageContract_AutoDecompression/disabled_gzip_passthrough",
+          "TestReqHTTP2CoverageContract_AutoDecompression/opted_in_deflate",
+          "TestReqHTTP2CoverageContract_StrictConcurrency/queued_request_waits_for_slot",
+          "TestReqHTTP2CoverageContract_StrictConcurrency/queued_cancel_releases_reservation",
+          "TestReqHTTP2CoverageContract_ReadErrorMetrics/peer_eof",
+          "TestReqHTTP2CoverageContract_ReadErrorMetrics/partial_frame_eof",
+          "TestReqHTTP2CoverageContract_ReadErrorMetrics/connection_protocol_error",
+          "TestReqHTTP2CoverageContract_RequestBodyFailure/reader_error_immediate",
+          "TestReqHTTP2CoverageContract_RequestBodyFailure/reader_error_after_prefix",
+          "TestReqHTTP2CoverageContract_RequestBodyFailure/body_larger_than_declared",
+          "TestReqHTTP2CoverageContract_HeaderDump/response_continuation_fields_once",
+          "TestReqHTTP2CoverageContract_HeaderDump/invalid_value_error_redacted_raw_dump_retained",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/settings",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/data_short",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/data_truncated",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/window_connection",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/window_stream",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/ping",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/goaway",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/rst_stream",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/unknown_type_and_flags",
+          "TestReqHTTP2CoverageFrame_DebugDecodeFailure",
+          "TestReqHTTP2CoverageFrame_MaxReadSizeClamp",
+          "TestReqHTTP2CoverageFrame_DiagnosticWriterErrorPreserved"
+        ]
+      },
+      {
+        "kind": "safariWrapper",
+        "package": "github.com/imroc/req/v3",
+        "count": 3,
+        "leaves": [
+          "TestReqSafariWrapperContract/global_safari",
+          "TestReqSafariWrapperContract/instance_safari",
+          "TestReqSafariWrapperContract/global_firefox_control"
+        ]
+      }
+    ],
+    "newOwnedFiles": [
+      "H1-BOUNDARY-CONTRACTS.md",
+      "PUBLIC-API-COVERAGE-CONTRACTS.md",
+      "PUBLIC-DEFAULT-CONTRACTS.md",
+      "SAFARI-WRAPPER-CONTRACTS.md",
+      "h1_boundary_contract_test.go",
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json",
+      "internal/bisect/BISECT-CONTRACTS.md",
+      "internal/bisect/contracts_test.go",
+      "internal/http2/COVERAGE-CONTRACTS.md",
+      "internal/http2/coverage_contract_peer_test.go",
+      "internal/http2/coverage_frame_contract_test.go",
+      "internal/http2/coverage_transport_contract_test.go",
+      "public_api_dump_contract_test.go",
+      "public_api_form_contract_test.go",
+      "public_api_peer_test.go",
+      "public_api_policy_contract_test.go",
+      "public_api_request_contract_test.go",
+      "public_default_contract_test.go",
+      "safari_wrapper_contract_test.go"
+    ],
+    "rawNewFiles": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 12672,
+        "sha256": "3c49bae413b492c305a5524620c91aaf5317f01977d323e9c2bfd2292665dddd"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 14104,
+        "sha256": "3434e3cddf466e251edc5780f71bd88fb52478c6135640ad0539f36909cee5d6"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 7795,
+        "sha256": "1c4790e11007620d35f9658bf88a122b3ee7064d69bb4af70ab4f8a18dd9a932"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17545,
+        "sha256": "c654bad6f9b66e40d5a837e4b893c7b690d0ed1555b6bf1320e4d95c0f974dc4"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 8544,
+        "sha256": "951089790a56b38dc1a776a6f41d10d74898f9f11976ef8835fa172098df1b79"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 7642,
+        "sha256": "20f1a7346ee7cea7bf5a78bc604198a09631bc738fdd72114a8c646e879976e2"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8149,
+        "sha256": "c31c9e2a746eeb31087b21ad82910f622b0a1e2fd974cf48de1f0884ba22c79b"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 24489,
+        "sha256": "66652c34870f37a02d77e104101d52f57c264dfc1c1ce063f95eb040028e1345"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 5837,
+        "sha256": "6fbcb8f3e3ec28b849bba4bc615beb071dca332b07d766f1b292900c9464f947"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 6432,
+        "sha256": "ec5a8418a2f72ef12303d95ab73027be6b642df630eebffcdfa94276df22b88d"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4284,
+        "sha256": "5d72efd18c41479663a769d0b5def3c8391322e8ee16b295ce64e02cd3f8fe94"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 12046,
+        "sha256": "75a14d013814e489f98a8d74b64014aba8b7475b5afd6055d24a93e221e26f64"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 5947,
+        "sha256": "073144d58abe4f028648fd84c602c0ed979782d1e78f9b284bd13a6887a8f070"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8323,
+        "sha256": "269cf1d768aa3143d7668d7c974e2a4882d20a5991635d8ae071efacff4a5d2c"
+      }
+    },
+    "safariAuthorization": "User explicitly authorized only global Safari wrapper reproduction/repair within existing1712 on2026-10-29; reviewed source8283363c2bde327e410dbfae8ca5083b98c951bf, root-unionae726. Independent source review receipt SHA6feade8997c09938acedfdad79c68ac6b5a9db7718e923cc1c70a9d34b3fb11b. No unrelated preset/transport change.",
+    "sourcePartition": "Original132 archive rows, prior17 production adaptations and2 original test adaptations preserved. Specific user-authorized bisect cache race repair adds18th production file:112+18+2=132. Wrapper remains index16 and bisect index17. Unchanged actual per-file85 algorithm applies to all18.",
+    "status": "CURRENT31 GO FILES REMOTELY FORMATTED: all124 actual operations exit0/empty and all31 raw==formatted; no Go bytes changed. Current19 owned-contract identity seals include docs; original raw and all prior format records retained as history. Exact final-head independent review and actual880 named/full race Linux/Windows, originalfour completions, all18 per-file85/fourprofiles/both original global85 and current security gates remain mandatory. Preliminary sibling CI metadata is not final-head actual acceptance; reproduced failures are not waived.",
+    "bisectBoundary": "Concrete retained private-library marker-only cache race reproduced in actual CI40853052089; user-authorized minimum atomic-read repair RAW/NOTRUN.112 tests unchanged; no ordinary HTTP/private-godebug activation proven. No lossiness or race waiver.",
+    "h2Boundary": "Returned-error redaction asserted separately while explicit raw dump retains original actual bytes; unreachable oversized-frame plan omitted rather than faked.",
+    "remoteFormatting": {
+      "controller": "d05d8c3bd2de8590c3cf093cd7da1b1bd3ded3cc",
+      "source": "1a8cac588077e3bed50c64a2a12a5704e9f9e806",
+      "sourceTree": "9e0c3e0e725942bac686c63a9561ea60ee93da23",
+      "run": 41029611698,
+      "job": 123975892169,
+      "artifact": 12964518905,
+      "artifactBytes": 31179113,
+      "artifactSHA256": "efb074cb2b9b467061809ba0c5a9262370d3637b2d1fd63f4ec76c1f39c76330",
+      "actualInputs": 31,
+      "actualOperations": 124,
+      "all31Raw0EmptyUnchanged": true,
+      "other93Exit0Empty": true,
+      "actualGoByteChanges": 0,
+      "prior30Exact579Formatted": true,
+      "ownerActualAuditSHA256": "1b3225754a72e56071380034cc21630f05910d481b818f53682abf0ffefb7892",
+      "rootIndependentActualAuditSHA256": "451a6cd36b888bdc4a86433c58d2175a953122f52c30fbb8a277ce5af70c1e78",
+      "actualTarModes": "Source4545 regular0664+6 executable0775, controller4546+6; Git100644/100755 type/executable and every blob/byte verified; no false0644/0755 archive claim",
+      "results": [
+        {
+          "path": "backend/third_party/req/client.go",
+          "bytes": 56029,
+          "rawSHA256": "a7db0cc3329c062028c6178e74546fc498c34b76bbfe3390d3c97e207e0355e8",
+          "formattedSHA256": "a7db0cc3329c062028c6178e74546fc498c34b76bbfe3390d3c97e207e0355e8",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/dump.go",
+          "bytes": 8784,
+          "rawSHA256": "a86c9b287ac7148f4764f10e5f2cc2a33ddd9e8c323bc1844ad5590f8c1c33c6",
+          "formattedSHA256": "a86c9b287ac7148f4764f10e5f2cc2a33ddd9e8c323bc1844ad5590f8c1c33c6",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/transport.go",
+          "bytes": 114700,
+          "rawSHA256": "0332c0ed2c207ee4597d9c7e90e93c8cadd6dbc7a017a3715d67c242ba4a81cb",
+          "formattedSHA256": "0332c0ed2c207ee4597d9c7e90e93c8cadd6dbc7a017a3715d67c242ba4a81cb",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/request.go",
+          "bytes": 39575,
+          "rawSHA256": "26df88a2481a72bb99b1ad6c8c0b9b14513bf411c91624356d8ae091547e739b",
+          "formattedSHA256": "26df88a2481a72bb99b1ad6c8c0b9b14513bf411c91624356d8ae091547e739b",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/dump/dump.go",
+          "bytes": 8043,
+          "rawSHA256": "94ec67e462133fa86624f44470c2e96f01b518ffbd1eb519b2ac9ea3a01e84f6",
+          "formattedSHA256": "94ec67e462133fa86624f44470c2e96f01b518ffbd1eb519b2ac9ea3a01e84f6",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/parallel_download.go",
+          "bytes": 14004,
+          "rawSHA256": "12a1f6b0d737a8b9d4704738ac74b74726d961c94caf49a76939aacf04bc89ca",
+          "formattedSHA256": "12a1f6b0d737a8b9d4704738ac74b74726d961c94caf49a76939aacf04bc89ca",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/client_test.go",
+          "bytes": 21376,
+          "rawSHA256": "3cfa2a3783fade7d199fc3846be0d9d2addbbec744c6ecffe6c60e7b66a48cd5",
+          "formattedSHA256": "3cfa2a3783fade7d199fc3846be0d9d2addbbec744c6ecffe6c60e7b66a48cd5",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/request_test.go",
+          "bytes": 29402,
+          "rawSHA256": "97ce4e027d244dde752f4400698f32bdae76b0130726005d28bd2b4865d1f4c3",
+          "formattedSHA256": "97ce4e027d244dde752f4400698f32bdae76b0130726005d28bd2b4865d1f4c3",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/dump_ownership_contract_test.go",
+          "bytes": 33740,
+          "rawSHA256": "d5bb80fd28f93e6cc357b6c93ff0109cefdde64b0c6ef60d16660bb806c67db1",
+          "formattedSHA256": "d5bb80fd28f93e6cc357b6c93ff0109cefdde64b0c6ef60d16660bb806c67db1",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/dump_ownership_peer_test.go",
+          "bytes": 4392,
+          "rawSHA256": "b4bc25cfed158317d932ca7ebd64cc1fbad0ce5fc8c25936519b82a50599a841",
+          "formattedSHA256": "b4bc25cfed158317d932ca7ebd64cc1fbad0ce5fc8c25936519b82a50599a841",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/receive_flow_contract_test.go",
+          "bytes": 13697,
+          "rawSHA256": "307939900113a97b360202b6d17e35a3b784d26019ffd2967d7dae1396007a70",
+          "formattedSHA256": "307939900113a97b360202b6d17e35a3b784d26019ffd2967d7dae1396007a70",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/transport.go",
+          "bytes": 95229,
+          "rawSHA256": "074f9a87a963011ad5ae0ea486192e4ec8b22856b75fb66f279398babc89382e",
+          "formattedSHA256": "074f9a87a963011ad5ae0ea486192e4ec8b22856b75fb66f279398babc89382e",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/custom_tls_handshake_peer_test.go",
+          "bytes": 4096,
+          "rawSHA256": "3bcec75f5164e0efcb0f86aa6e1e35857f2d8211d80ca95120d2c093af7d401b",
+          "formattedSHA256": "3bcec75f5164e0efcb0f86aa6e1e35857f2d8211d80ca95120d2c093af7d401b",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/custom_tls_handshake_test.go",
+          "bytes": 7617,
+          "rawSHA256": "4ce46f6b1edef1172ee3ede6cfe5735e8947545705705398f0602d635c00d999",
+          "formattedSHA256": "4ce46f6b1edef1172ee3ede6cfe5735e8947545705705398f0602d635c00d999",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/custom_tls_handshake_boundary_test.go",
+          "bytes": 9419,
+          "rawSHA256": "159641ae9df4de70f0c39d4fa07934d88280165adaf79bce62cdda0e0ac62419",
+          "formattedSHA256": "159641ae9df4de70f0c39d4fa07934d88280165adaf79bce62cdda0e0ac62419",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/custom_tls_handshake_peer_test.go",
+          "bytes": 3726,
+          "rawSHA256": "6121032f5593da00a43a65ae341aa1e405b8c46341c693faea209011756a7626",
+          "formattedSHA256": "6121032f5593da00a43a65ae341aa1e405b8c46341c693faea209011756a7626",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/custom_tls_handshake_test.go",
+          "bytes": 9379,
+          "rawSHA256": "c778bb6009f452e9251896396f2ce04b0a6c3516bc5b89d965dadbaa77438f63",
+          "formattedSHA256": "c778bb6009f452e9251896396f2ce04b0a6c3516bc5b89d965dadbaa77438f63",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_peer_test.go",
+          "bytes": 4521,
+          "rawSHA256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9",
+          "formattedSHA256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_request_contract_test.go",
+          "bytes": 6404,
+          "rawSHA256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847",
+          "formattedSHA256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_form_contract_test.go",
+          "bytes": 7305,
+          "rawSHA256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9",
+          "formattedSHA256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_dump_contract_test.go",
+          "bytes": 6345,
+          "rawSHA256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa",
+          "formattedSHA256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_policy_contract_test.go",
+          "bytes": 13542,
+          "rawSHA256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392",
+          "formattedSHA256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/h1_boundary_contract_test.go",
+          "bytes": 13070,
+          "rawSHA256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752",
+          "formattedSHA256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/public_default_contract_test.go",
+          "bytes": 10615,
+          "rawSHA256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
+          "formattedSHA256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/bisect/contracts_test.go",
+          "bytes": 17548,
+          "rawSHA256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5",
+          "formattedSHA256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/coverage_contract_peer_test.go",
+          "bytes": 8697,
+          "rawSHA256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47",
+          "formattedSHA256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/coverage_frame_contract_test.go",
+          "bytes": 8358,
+          "rawSHA256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb",
+          "formattedSHA256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/coverage_transport_contract_test.go",
+          "bytes": 25748,
+          "rawSHA256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8",
+          "formattedSHA256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/client_wrapper.go",
+          "bytes": 30244,
+          "rawSHA256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+          "formattedSHA256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/safari_wrapper_contract_test.go",
+          "bytes": 8687,
+          "rawSHA256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3",
+          "formattedSHA256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3",
+          "allFourActualExit0Empty": true
+        },
+        {
+          "path": "backend/third_party/req/internal/bisect/bisect.go",
+          "bytes": 23993,
+          "rawSHA256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+          "formattedSHA256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+          "allFourActualExit0Empty": true
+        }
+      ],
+      "scope": "Actual remote formatting only. Current31 Go bytes equal returned raw/formatted; no code changed on import. No runtime/race/Windows/coverage/security or whole-PR approval."
+    },
+    "formattedNewFilesBeforeH2StateCorrection": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 14104,
+        "sha256": "3434e3cddf466e251edc5780f71bd88fb52478c6135640ad0539f36909cee5d6"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 7795,
+        "sha256": "1c4790e11007620d35f9658bf88a122b3ee7064d69bb4af70ab4f8a18dd9a932"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 8544,
+        "sha256": "951089790a56b38dc1a776a6f41d10d74898f9f11976ef8835fa172098df1b79"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 7891,
+        "sha256": "182a4d2ab724411aa1dd61d41adb7f05983fb442e6dd685c4ac480116820cc2f"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25701,
+        "sha256": "44f94032c3f36024d3fb73bfdbed681a081ea52b19e16ba0c3e3cb6e845bc06b"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "candidateNewFilesBeforeRemoteReformat": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 14104,
+        "sha256": "3434e3cddf466e251edc5780f71bd88fb52478c6135640ad0539f36909cee5d6"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 7795,
+        "sha256": "1c4790e11007620d35f9658bf88a122b3ee7064d69bb4af70ab4f8a18dd9a932"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "h2StateObservationCorrection": {
+      "rawSource": "530281903887998bd5a76cdf5250a0639eaed3cf",
+      "originalFailedHead": "c82356c8115678ff669e088a3d44dc955482b3c4",
+      "failedPRRun": 40853052089,
+      "independentSourceReviewSHA256": "d568e328df1481e00686312509d381f4bfb4a45271efdf39e8738ac3358b4084",
+      "scope": "Only test helpers observe actual connection fields under cc.mu because copied ClientConn has no State API. All51 H2 and880 total identities, real queued/cancel/closed assertions and production bytes unchanged.",
+      "status": "Independently reviewed test-only correction; actual remote formatter40993088337 confirms all30 already canonical. Exact-head compilation/race and51 H2 runtime tests remain pending; c823 actual failure retained."
+    },
+    "remoteFormattingHistory": [
+      {
+        "controller": "76edf129ca97fc02b4768b2d4645bfca298ba6a4",
+        "source": "ae7260bba43cc8ed07db94513a42b73e5b9d104b",
+        "sourceTree": "490495c4230c87d3ffa8aa709956192fa4318f40",
+        "run": 40850936373,
+        "artifact": 12887291284,
+        "artifactBytes": 31139810,
+        "artifactSHA256": "d6722072133d5f509e67351352d990b49e38bd87209768add419ca968d6f2906",
+        "independentActualReceiptSHA256": "bb3abf540b4c4c67e64a36512dcc5a7bd1900a085dae6c02f8294808438bb1a0",
+        "actualInputs": 30,
+        "actualOperations": 120,
+        "retained17AllUnchanged": true,
+        "additional13Changed": 11,
+        "additional13Unchanged": 2,
+        "importedFiles": [
+          {
+            "path": "backend/third_party/req/public_api_peer_test.go",
+            "rawSHA256": "5d72efd18c41479663a769d0b5def3c8391322e8ee16b295ce64e02cd3f8fe94",
+            "formattedSHA256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/public_api_request_contract_test.go",
+            "rawSHA256": "073144d58abe4f028648fd84c602c0ed979782d1e78f9b284bd13a6887a8f070",
+            "formattedSHA256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/public_api_form_contract_test.go",
+            "rawSHA256": "ec5a8418a2f72ef12303d95ab73027be6b642df630eebffcdfa94276df22b88d",
+            "formattedSHA256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/public_api_dump_contract_test.go",
+            "rawSHA256": "6fbcb8f3e3ec28b849bba4bc615beb071dca332b07d766f1b292900c9464f947",
+            "formattedSHA256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/public_api_policy_contract_test.go",
+            "rawSHA256": "75a14d013814e489f98a8d74b64014aba8b7475b5afd6055d24a93e221e26f64",
+            "formattedSHA256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/h1_boundary_contract_test.go",
+            "rawSHA256": "3c49bae413b492c305a5524620c91aaf5317f01977d323e9c2bfd2292665dddd",
+            "formattedSHA256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/public_default_contract_test.go",
+            "rawSHA256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
+            "formattedSHA256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/bisect/contracts_test.go",
+            "rawSHA256": "c654bad6f9b66e40d5a837e4b893c7b690d0ed1555b6bf1320e4d95c0f974dc4",
+            "formattedSHA256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/coverage_contract_peer_test.go",
+            "rawSHA256": "20f1a7346ee7cea7bf5a78bc604198a09631bc738fdd72114a8c646e879976e2",
+            "formattedSHA256": "182a4d2ab724411aa1dd61d41adb7f05983fb442e6dd685c4ac480116820cc2f",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/coverage_frame_contract_test.go",
+            "rawSHA256": "c31c9e2a746eeb31087b21ad82910f622b0a1e2fd974cf48de1f0884ba22c79b",
+            "formattedSHA256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/coverage_transport_contract_test.go",
+            "rawSHA256": "66652c34870f37a02d77e104101d52f57c264dfc1c1ce063f95eb040028e1345",
+            "formattedSHA256": "44f94032c3f36024d3fb73bfdbed681a081ea52b19e16ba0c3e3cb6e845bc06b",
+            "changed": true
+          },
+          {
+            "path": "backend/third_party/req/client_wrapper.go",
+            "rawSHA256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+            "formattedSHA256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/safari_wrapper_contract_test.go",
+            "rawSHA256": "269cf1d768aa3143d7668d7c974e2a4882d20a5991635d8ae071efacff4a5d2c",
+            "formattedSHA256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3",
+            "changed": true
+          }
+        ],
+        "policy": "Only exact remote-formatted copies were imported; original raw author/provenance records remain historical. Formatting evidence is not runtime, race, Windows, full source acceptance or coverage evidence."
+      },
+      {
+        "controller": "57925247d9a6ba999830ffdf99e11aee7848935d",
+        "source": "f6817b25ffa762025a4557284c71bb83f43260c8",
+        "sourceTree": "6110d81880f6d93a297e8a04e63f2dc8117b6778",
+        "run": 40993088337,
+        "artifact": 12950420576,
+        "artifactBytes": 31131993,
+        "artifactSHA256": "70fce3f29a0570a67a5069e251ec9fc87fa07f51603d1ec54543b13f79e49519",
+        "independentActualReceiptSHA256": "34e6cd31240eae5f006c29528407e463fe76b42a10a9ed281df664fde3f1ddd8",
+        "actualInputs": 30,
+        "actualOperations": 120,
+        "actualRaw0Unchanged": 30,
+        "actualRaw1Changed": 0,
+        "actualOther90ZeroEmpty": true,
+        "currentGoMatchesExactFormattedOutput": [
+          {
+            "path": "backend/third_party/req/client.go",
+            "bytes": 56029,
+            "sha256": "a7db0cc3329c062028c6178e74546fc498c34b76bbfe3390d3c97e207e0355e8",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/dump.go",
+            "bytes": 8784,
+            "sha256": "a86c9b287ac7148f4764f10e5f2cc2a33ddd9e8c323bc1844ad5590f8c1c33c6",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/transport.go",
+            "bytes": 114700,
+            "sha256": "0332c0ed2c207ee4597d9c7e90e93c8cadd6dbc7a017a3715d67c242ba4a81cb",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/request.go",
+            "bytes": 39575,
+            "sha256": "26df88a2481a72bb99b1ad6c8c0b9b14513bf411c91624356d8ae091547e739b",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/dump/dump.go",
+            "bytes": 8043,
+            "sha256": "94ec67e462133fa86624f44470c2e96f01b518ffbd1eb519b2ac9ea3a01e84f6",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/parallel_download.go",
+            "bytes": 14004,
+            "sha256": "12a1f6b0d737a8b9d4704738ac74b74726d961c94caf49a76939aacf04bc89ca",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/client_test.go",
+            "bytes": 21376,
+            "sha256": "3cfa2a3783fade7d199fc3846be0d9d2addbbec744c6ecffe6c60e7b66a48cd5",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/request_test.go",
+            "bytes": 29402,
+            "sha256": "97ce4e027d244dde752f4400698f32bdae76b0130726005d28bd2b4865d1f4c3",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/dump_ownership_contract_test.go",
+            "bytes": 33740,
+            "sha256": "d5bb80fd28f93e6cc357b6c93ff0109cefdde64b0c6ef60d16660bb806c67db1",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/dump_ownership_peer_test.go",
+            "bytes": 4392,
+            "sha256": "b4bc25cfed158317d932ca7ebd64cc1fbad0ce5fc8c25936519b82a50599a841",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/receive_flow_contract_test.go",
+            "bytes": 13697,
+            "sha256": "307939900113a97b360202b6d17e35a3b784d26019ffd2967d7dae1396007a70",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/transport.go",
+            "bytes": 95229,
+            "sha256": "074f9a87a963011ad5ae0ea486192e4ec8b22856b75fb66f279398babc89382e",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/custom_tls_handshake_peer_test.go",
+            "bytes": 4096,
+            "sha256": "3bcec75f5164e0efcb0f86aa6e1e35857f2d8211d80ca95120d2c093af7d401b",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/custom_tls_handshake_test.go",
+            "bytes": 7617,
+            "sha256": "4ce46f6b1edef1172ee3ede6cfe5735e8947545705705398f0602d635c00d999",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/custom_tls_handshake_boundary_test.go",
+            "bytes": 9419,
+            "sha256": "159641ae9df4de70f0c39d4fa07934d88280165adaf79bce62cdda0e0ac62419",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/custom_tls_handshake_peer_test.go",
+            "bytes": 3726,
+            "sha256": "6121032f5593da00a43a65ae341aa1e405b8c46341c693faea209011756a7626",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/custom_tls_handshake_test.go",
+            "bytes": 9379,
+            "sha256": "c778bb6009f452e9251896396f2ce04b0a6c3516bc5b89d965dadbaa77438f63",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/public_api_peer_test.go",
+            "bytes": 4521,
+            "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/public_api_request_contract_test.go",
+            "bytes": 6404,
+            "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/public_api_form_contract_test.go",
+            "bytes": 7305,
+            "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/public_api_dump_contract_test.go",
+            "bytes": 6345,
+            "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/public_api_policy_contract_test.go",
+            "bytes": 13542,
+            "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/h1_boundary_contract_test.go",
+            "bytes": 13070,
+            "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/public_default_contract_test.go",
+            "bytes": 10615,
+            "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/bisect/contracts_test.go",
+            "bytes": 17548,
+            "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/coverage_contract_peer_test.go",
+            "bytes": 8697,
+            "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/coverage_frame_contract_test.go",
+            "bytes": 8358,
+            "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/internal/http2/coverage_transport_contract_test.go",
+            "bytes": 25748,
+            "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/client_wrapper.go",
+            "bytes": 30244,
+            "sha256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+            "changed": false
+          },
+          {
+            "path": "backend/third_party/req/safari_wrapper_contract_test.go",
+            "bytes": 8687,
+            "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3",
+            "changed": false
+          }
+        ],
+        "policy": "All thirty existing source Go files already equal the actual new formatted copies; no Go bytes changed during import. Prior format evidence remains historical; new format evidence is not compilation/runtime/race/coverage acceptance."
+      }
+    ],
+    "candidateNewFilesAfterBisectRaceRepair": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 15841,
+        "sha256": "fd48644ce51e6888d303ca4a4a461ff6b30c15089505e3ce5ab0e0389faa59ba"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 9675,
+        "sha256": "acb558bb0fc14462a91be693b7b29481801b02a0a0c459870d537e1751e9b99b"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "formattedNewFilesBeforeBisectRaceRepair": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 14104,
+        "sha256": "3434e3cddf466e251edc5780f71bd88fb52478c6135640ad0539f36909cee5d6"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 7795,
+        "sha256": "1c4790e11007620d35f9658bf88a122b3ee7064d69bb4af70ab4f8a18dd9a932"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "candidateNewFilesBeforeCombinedRemoteFormat": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 15841,
+        "sha256": "fd48644ce51e6888d303ca4a4a461ff6b30c15089505e3ce5ab0e0389faa59ba"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 9675,
+        "sha256": "acb558bb0fc14462a91be693b7b29481801b02a0a0c459870d537e1751e9b99b"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "remoteFormattingPreparation": {
+      "status": "PENDING: latest combined source requires actual remote31-file/124-operation formatter; prior30-file receipts retained unchanged as historical evidence",
+      "plannedInputs": 31,
+      "plannedOperations": 124,
+      "noLocalOr87Execution": true
+    },
+    "formattedNewFiles": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 15841,
+        "sha256": "fd48644ce51e6888d303ca4a4a461ff6b30c15089505e3ce5ab0e0389faa59ba"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 9675,
+        "sha256": "acb558bb0fc14462a91be693b7b29481801b02a0a0c459870d537e1751e9b99b"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    }
+  },
+  "bisectCacheRaceRepair": {
+    "authorization": "User: 允许在现有 #1712 内修复此竞态; 2026-10-30; no new issue/PR/batch or unrelated upstream changes",
+    "baseHead": "1898272d4fdb7f939e60fae11f0fc83cbf5cf8a0",
+    "actualRedHead": "c82356c8115678ff669e088a3d44dc955482b3c4",
+    "actualRedRun": 40853052089,
+    "actualRedJob": 123377058265,
+    "actualRedArtifact": 12888267228,
+    "actualRedArtifactSHA256": "c4e9241c2c47274b678a95df545d4a66ead9ef5c5f1aac8e0c8df3664cb88dbf",
+    "actualRedLeaf": "TestReqBisectContract_StackReports/concurrent_marker_lossy",
+    "problem": "Original ordinary eviction-hash range read races an atomic.StoreUint64 from another Matcher.stack call; actual original789 read and471 stack path retained.",
+    "repair": "Only eviction-hash range uses index and atomic.LoadUint64(&cache[i]); preserve lossy approximate dedup and existing atomic stores.",
+    "originalPath": "internal/bisect/bisect.go",
+    "originalBytes": 23969,
+    "originalSHA256": "de2e6582ffb06e9745167ae4ed820371b88c7b3af5a793d289a9997ebaedf916",
+    "candidateBytes": 23993,
+    "candidateSHA256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+    "productionAdaptationIndex": 17,
+    "sourcePartition": "112+18+2=132; first17 original adaptations and132 archive rows preserved; same per-file85 applied to eighteenth file",
+    "requiredCases": 112,
+    "reachabilityLimit": "Private library concurrency reproduced; ordinary HTTP/godebug runtime environment activation remains unproven.",
+    "status": "Source independently reviewed and remotely formatted; final-head actual race/coverage NOTRUN and original RED retained, not LGTM",
+    "remoteFormatting": {
+      "run": 41029611698,
+      "path": "internal/bisect/bisect.go",
+      "actualBytes": 23993,
+      "actualSHA256": "75700a56b32a367f441936cd460210eb85639e8be9adb14c66050a3c731821f9",
+      "allFourActualExit0EmptyAndRawUnchanged": true
+    }
+  },
+  "existing1712Oct30Composition": {
+    "scope": "Only existing saved prerequisites plus explicitly authorized TLS/Safari/Vue/bisect blocking repairs; no new issue/PR/batch",
+    "h2TestObservationSource": "530281903887998bd5a76cdf5250a0639eaed3cf",
+    "h2IndependentRootReviewSHA256": "d568e328df1481e00686312509d381f4bfb4a45271efdf39e8738ac3358b4084",
+    "vueSourceC": "338d1a0fc8fad85cb368c6b80a8779e15162405a",
+    "vueIndependentReviewSHA256": "558416b39f14eda2d8ee0d5966e5fc9859897ba9839e838d7cf3691682a8a2ba",
+    "vueReconciledLockSHA256": "82ef5a10dccd9ba11d6c58b9d267bd7ff4da9b1f63a3467175f1ef35c317a72b",
+    "vuePermanentExactTenCI": "8b43d3ce287298aa29560d33ddeef65b04ca70bd",
+    "vueCIIndependentRootReviewSHA256": "4e822f46dcf55764a703ce218864f0092f4e60d20edf62c00fb87672456aa00e",
+    "bisectSource": "49092cfb7ce02a1f8e0ff6cd60973ee48bf0e39d",
+    "bisectIndependentRootReviewSHA256": "3a8f96a7c1eefc2a74f672a49d1f9848674d0be9f55b66cb2b85cf707c20c67c",
+    "bisectIndependentCrossReviewSHA256": "371804aadd9527e419d69772702ecc2c29b4d016a11dc89fbb72d1a60854bd89",
+    "sourcePartition": "112 unchanged+18 production adaptations+2 original test adaptations=132; prior17 and original132 rows retained",
+    "status": "All authorized source repairs independently reviewed and current31Go actual remote formatting verified; final metadata needs independent review and all actual final-head checks. New decode security failure remains blocking and outside current production repair authorization. No wholePR LGTM/merge.",
+    "combinedSourceIndependentReviewSHA256": "75723b75e5f07f39d3e09e2a490932c5f134db848032dffea20363b31eb72ce8",
+    "vueNode22ObserverCompatibility": {
+      "source": "9c45b47cffe58c61ce4135997736a2073927f13c",
+      "actualPriorFailureRun": 41029611595,
+      "actualPriorFailureJob": 123975892084,
+      "description": "Existing DOMPurify evidence helper still required Node20 after authorized Vue CI moved to22. Only exact Node-major guard moved20→22; every package/source/integrity/pnpm9 check retained.",
+      "independentReviewSHA256": "93422da81d8bd7ba8c32c90d52d3ff3707f8a00d1a60f19cbcadc7bd42b8e1c4",
+      "runtime": "New guard final-head execution pending"
+    },
+    "additionalSecurityBlocker": {
+      "advisory": "GHSA-qr28-fpjm-wq7f",
+      "actualRun": 41029611595,
+      "actualJob": 123975892084,
+      "state": "Actual unchanged policy rejects installed decode-uri-component0.4.1; separate repair scope under readonly investigation, not authorized/applied; no waiver or new exception",
+      "reachability": "Application exploit/Node remote-entry reachability unproven"
+    }
+  }
+}

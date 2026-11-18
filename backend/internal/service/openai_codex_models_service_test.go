@@ -613,6 +613,10 @@ func TestFetchCodexModelsManifestMissingToken(t *testing.T) {
 }
 
 func TestIsRetryableCodexModelsManifestTransportError(t *testing.T) {
+	nativeGoAway := codexModelsWireGoAway(t, false)
+	privateGoAway := codexModelsWireGoAway(t, true)
+	t.Run("native opaque GOAWAY", func(t *testing.T) { testCodexModelsGoAwayWrappers(t, nativeGoAway) })
+	t.Run("private req opaque GOAWAY", func(t *testing.T) { testCodexModelsGoAwayWrappers(t, privateGoAway) })
 	tests := []struct {
 		name      string
 		err       error
@@ -629,7 +633,8 @@ func TestIsRetryableCodexModelsManifestTransportError(t *testing.T) {
 		{name: "closed connection", err: net.ErrClosed, retryable: true},
 		{name: "network operation", err: &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset")}, retryable: true},
 		{name: "dns", err: &net.DNSError{Err: "temporary failure", Name: "upstream.example"}, retryable: true},
-		{name: "typed goaway", err: http2.GoAwayError{ErrCode: http2.ErrCodeNo}, retryable: true},
+		{name: "typed goaway", err: nativeGoAway, retryable: true},
+		{name: "private req typed goaway", err: privateGoAway, retryable: true},
 		{name: "typed stream error", err: http2.StreamError{Code: http2.ErrCodeRefusedStream}, retryable: true},
 		{name: "typed connection error", err: http2.ConnectionError(http2.ErrCodeProtocol), retryable: true},
 		{name: "stdlib goaway", err: errors.New("http2: server sent GOAWAY and closed the connection"), retryable: true},

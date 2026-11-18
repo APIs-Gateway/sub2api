@@ -54,7 +54,7 @@
       </div>
       <!-- 模型加载失败：显示提示和重试入口 -->
       <div v-if="modelsLoadFailed" class="mt-2 flex items-center gap-3" data-test="ccs-models-error">
-        <p class="input-hint flex-1 text-red-600 dark:text-red-400">{{ t('keyOnboarding.ccs.modelsError') }}</p>
+        <p :id="hintId" class="input-hint flex-1 text-red-600 dark:text-red-400" role="status" data-test="ccs-models-hint">{{ t('keyOnboarding.ccs.modelsError') }}</p>
         <button
           type="button"
           class="btn btn-secondary btn-xs"
