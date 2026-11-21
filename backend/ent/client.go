@@ -24,6 +24,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitor"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitordailyrollup"
+	"github.com/Wei-Shaw/sub2api/ent/channelmonitorgroupstats"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitorhistory"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitorrequesttemplate"
 	"github.com/Wei-Shaw/sub2api/ent/errorpassthroughrule"
@@ -77,6 +78,8 @@ type Client struct {
 	ChannelMonitor *ChannelMonitorClient
 	// ChannelMonitorDailyRollup is the client for interacting with the ChannelMonitorDailyRollup builders.
 	ChannelMonitorDailyRollup *ChannelMonitorDailyRollupClient
+	// ChannelMonitorGroupStats is the client for interacting with the ChannelMonitorGroupStats builders.
+	ChannelMonitorGroupStats *ChannelMonitorGroupStatsClient
 	// ChannelMonitorHistory is the client for interacting with the ChannelMonitorHistory builders.
 	ChannelMonitorHistory *ChannelMonitorHistoryClient
 	// ChannelMonitorRequestTemplate is the client for interacting with the ChannelMonitorRequestTemplate builders.
@@ -149,6 +152,7 @@ func (c *Client) init() {
 	c.AuthIdentityChannel = NewAuthIdentityChannelClient(c.config)
 	c.ChannelMonitor = NewChannelMonitorClient(c.config)
 	c.ChannelMonitorDailyRollup = NewChannelMonitorDailyRollupClient(c.config)
+	c.ChannelMonitorGroupStats = NewChannelMonitorGroupStatsClient(c.config)
 	c.ChannelMonitorHistory = NewChannelMonitorHistoryClient(c.config)
 	c.ChannelMonitorRequestTemplate = NewChannelMonitorRequestTemplateClient(c.config)
 	c.ErrorPassthroughRule = NewErrorPassthroughRuleClient(c.config)
@@ -276,6 +280,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		AuthIdentityChannel:           NewAuthIdentityChannelClient(cfg),
 		ChannelMonitor:                NewChannelMonitorClient(cfg),
 		ChannelMonitorDailyRollup:     NewChannelMonitorDailyRollupClient(cfg),
+		ChannelMonitorGroupStats:      NewChannelMonitorGroupStatsClient(cfg),
 		ChannelMonitorHistory:         NewChannelMonitorHistoryClient(cfg),
 		ChannelMonitorRequestTemplate: NewChannelMonitorRequestTemplateClient(cfg),
 		ErrorPassthroughRule:          NewErrorPassthroughRuleClient(cfg),
@@ -330,6 +335,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		AuthIdentityChannel:           NewAuthIdentityChannelClient(cfg),
 		ChannelMonitor:                NewChannelMonitorClient(cfg),
 		ChannelMonitorDailyRollup:     NewChannelMonitorDailyRollupClient(cfg),
+		ChannelMonitorGroupStats:      NewChannelMonitorGroupStatsClient(cfg),
 		ChannelMonitorHistory:         NewChannelMonitorHistoryClient(cfg),
 		ChannelMonitorRequestTemplate: NewChannelMonitorRequestTemplateClient(cfg),
 		ErrorPassthroughRule:          NewErrorPassthroughRuleClient(cfg),
@@ -387,13 +393,14 @@ func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.APIKey, c.Account, c.AccountGroup, c.Announcement, c.AnnouncementRead,
 		c.AuthIdentity, c.AuthIdentityChannel, c.ChannelMonitor,
-		c.ChannelMonitorDailyRollup, c.ChannelMonitorHistory,
-		c.ChannelMonitorRequestTemplate, c.ErrorPassthroughRule, c.Group,
-		c.IdempotencyRecord, c.IdentityAdoptionDecision, c.PaymentAuditLog,
-		c.PaymentOrder, c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode,
-		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting,
-		c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog,
-		c.User, c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
+		c.ChannelMonitorDailyRollup, c.ChannelMonitorGroupStats,
+		c.ChannelMonitorHistory, c.ChannelMonitorRequestTemplate,
+		c.ErrorPassthroughRule, c.Group, c.IdempotencyRecord,
+		c.IdentityAdoptionDecision, c.PaymentAuditLog, c.PaymentOrder,
+		c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage,
+		c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting, c.SubscriptionPlan,
+		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.User,
+		c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
 		c.UserPlatformQuota, c.UserSubscription,
 	} {
 		n.Use(hooks...)
@@ -406,13 +413,14 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.APIKey, c.Account, c.AccountGroup, c.Announcement, c.AnnouncementRead,
 		c.AuthIdentity, c.AuthIdentityChannel, c.ChannelMonitor,
-		c.ChannelMonitorDailyRollup, c.ChannelMonitorHistory,
-		c.ChannelMonitorRequestTemplate, c.ErrorPassthroughRule, c.Group,
-		c.IdempotencyRecord, c.IdentityAdoptionDecision, c.PaymentAuditLog,
-		c.PaymentOrder, c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode,
-		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting,
-		c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog,
-		c.User, c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
+		c.ChannelMonitorDailyRollup, c.ChannelMonitorGroupStats,
+		c.ChannelMonitorHistory, c.ChannelMonitorRequestTemplate,
+		c.ErrorPassthroughRule, c.Group, c.IdempotencyRecord,
+		c.IdentityAdoptionDecision, c.PaymentAuditLog, c.PaymentOrder,
+		c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage,
+		c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting, c.SubscriptionPlan,
+		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.User,
+		c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
 		c.UserPlatformQuota, c.UserSubscription,
 	} {
 		n.Intercept(interceptors...)
@@ -440,6 +448,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.ChannelMonitor.mutate(ctx, m)
 	case *ChannelMonitorDailyRollupMutation:
 		return c.ChannelMonitorDailyRollup.mutate(ctx, m)
+	case *ChannelMonitorGroupStatsMutation:
+		return c.ChannelMonitorGroupStats.mutate(ctx, m)
 	case *ChannelMonitorHistoryMutation:
 		return c.ChannelMonitorHistory.mutate(ctx, m)
 	case *ChannelMonitorRequestTemplateMutation:
@@ -1966,6 +1976,139 @@ func (c *ChannelMonitorDailyRollupClient) mutate(ctx context.Context, m *Channel
 		return (&ChannelMonitorDailyRollupDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown ChannelMonitorDailyRollup mutation op: %q", m.Op())
+	}
+}
+
+// ChannelMonitorGroupStatsClient is a client for the ChannelMonitorGroupStats schema.
+type ChannelMonitorGroupStatsClient struct {
+	config
+}
+
+// NewChannelMonitorGroupStatsClient returns a client for the ChannelMonitorGroupStats from the given config.
+func NewChannelMonitorGroupStatsClient(c config) *ChannelMonitorGroupStatsClient {
+	return &ChannelMonitorGroupStatsClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `channelmonitorgroupstats.Hooks(f(g(h())))`.
+func (c *ChannelMonitorGroupStatsClient) Use(hooks ...Hook) {
+	c.hooks.ChannelMonitorGroupStats = append(c.hooks.ChannelMonitorGroupStats, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `channelmonitorgroupstats.Intercept(f(g(h())))`.
+func (c *ChannelMonitorGroupStatsClient) Intercept(interceptors ...Interceptor) {
+	c.inters.ChannelMonitorGroupStats = append(c.inters.ChannelMonitorGroupStats, interceptors...)
+}
+
+// Create returns a builder for creating a ChannelMonitorGroupStats entity.
+func (c *ChannelMonitorGroupStatsClient) Create() *ChannelMonitorGroupStatsCreate {
+	mutation := newChannelMonitorGroupStatsMutation(c.config, OpCreate)
+	return &ChannelMonitorGroupStatsCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of ChannelMonitorGroupStats entities.
+func (c *ChannelMonitorGroupStatsClient) CreateBulk(builders ...*ChannelMonitorGroupStatsCreate) *ChannelMonitorGroupStatsCreateBulk {
+	return &ChannelMonitorGroupStatsCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *ChannelMonitorGroupStatsClient) MapCreateBulk(slice any, setFunc func(*ChannelMonitorGroupStatsCreate, int)) *ChannelMonitorGroupStatsCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &ChannelMonitorGroupStatsCreateBulk{err: fmt.Errorf("calling to ChannelMonitorGroupStatsClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*ChannelMonitorGroupStatsCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &ChannelMonitorGroupStatsCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for ChannelMonitorGroupStats.
+func (c *ChannelMonitorGroupStatsClient) Update() *ChannelMonitorGroupStatsUpdate {
+	mutation := newChannelMonitorGroupStatsMutation(c.config, OpUpdate)
+	return &ChannelMonitorGroupStatsUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *ChannelMonitorGroupStatsClient) UpdateOne(_m *ChannelMonitorGroupStats) *ChannelMonitorGroupStatsUpdateOne {
+	mutation := newChannelMonitorGroupStatsMutation(c.config, OpUpdateOne, withChannelMonitorGroupStats(_m))
+	return &ChannelMonitorGroupStatsUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *ChannelMonitorGroupStatsClient) UpdateOneID(id int64) *ChannelMonitorGroupStatsUpdateOne {
+	mutation := newChannelMonitorGroupStatsMutation(c.config, OpUpdateOne, withChannelMonitorGroupStatsID(id))
+	return &ChannelMonitorGroupStatsUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for ChannelMonitorGroupStats.
+func (c *ChannelMonitorGroupStatsClient) Delete() *ChannelMonitorGroupStatsDelete {
+	mutation := newChannelMonitorGroupStatsMutation(c.config, OpDelete)
+	return &ChannelMonitorGroupStatsDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *ChannelMonitorGroupStatsClient) DeleteOne(_m *ChannelMonitorGroupStats) *ChannelMonitorGroupStatsDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *ChannelMonitorGroupStatsClient) DeleteOneID(id int64) *ChannelMonitorGroupStatsDeleteOne {
+	builder := c.Delete().Where(channelmonitorgroupstats.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &ChannelMonitorGroupStatsDeleteOne{builder}
+}
+
+// Query returns a query builder for ChannelMonitorGroupStats.
+func (c *ChannelMonitorGroupStatsClient) Query() *ChannelMonitorGroupStatsQuery {
+	return &ChannelMonitorGroupStatsQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeChannelMonitorGroupStats},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a ChannelMonitorGroupStats entity by its id.
+func (c *ChannelMonitorGroupStatsClient) Get(ctx context.Context, id int64) (*ChannelMonitorGroupStats, error) {
+	return c.Query().Where(channelmonitorgroupstats.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *ChannelMonitorGroupStatsClient) GetX(ctx context.Context, id int64) *ChannelMonitorGroupStats {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *ChannelMonitorGroupStatsClient) Hooks() []Hook {
+	return c.hooks.ChannelMonitorGroupStats
+}
+
+// Interceptors returns the client interceptors.
+func (c *ChannelMonitorGroupStatsClient) Interceptors() []Interceptor {
+	return c.inters.ChannelMonitorGroupStats
+}
+
+func (c *ChannelMonitorGroupStatsClient) mutate(ctx context.Context, m *ChannelMonitorGroupStatsMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&ChannelMonitorGroupStatsCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&ChannelMonitorGroupStatsUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&ChannelMonitorGroupStatsUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&ChannelMonitorGroupStatsDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown ChannelMonitorGroupStats mutation op: %q", m.Op())
 	}
 }
 
@@ -6291,24 +6434,24 @@ type (
 	hooks struct {
 		APIKey, Account, AccountGroup, Announcement, AnnouncementRead, AuthIdentity,
 		AuthIdentityChannel, ChannelMonitor, ChannelMonitorDailyRollup,
-		ChannelMonitorHistory, ChannelMonitorRequestTemplate, ErrorPassthroughRule,
-		Group, IdempotencyRecord, IdentityAdoptionDecision, PaymentAuditLog,
-		PaymentOrder, PaymentProviderInstance, PendingAuthSession, PromoCode,
-		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
-		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
-		UserAttributeDefinition, UserAttributeValue, UserPlatformQuota,
-		UserSubscription []ent.Hook
+		ChannelMonitorGroupStats, ChannelMonitorHistory, ChannelMonitorRequestTemplate,
+		ErrorPassthroughRule, Group, IdempotencyRecord, IdentityAdoptionDecision,
+		PaymentAuditLog, PaymentOrder, PaymentProviderInstance, PendingAuthSession,
+		PromoCode, PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting,
+		SubscriptionPlan, TLSFingerprintProfile, UsageCleanupTask, UsageLog, User,
+		UserAllowedGroup, UserAttributeDefinition, UserAttributeValue,
+		UserPlatformQuota, UserSubscription []ent.Hook
 	}
 	inters struct {
 		APIKey, Account, AccountGroup, Announcement, AnnouncementRead, AuthIdentity,
 		AuthIdentityChannel, ChannelMonitor, ChannelMonitorDailyRollup,
-		ChannelMonitorHistory, ChannelMonitorRequestTemplate, ErrorPassthroughRule,
-		Group, IdempotencyRecord, IdentityAdoptionDecision, PaymentAuditLog,
-		PaymentOrder, PaymentProviderInstance, PendingAuthSession, PromoCode,
-		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
-		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
-		UserAttributeDefinition, UserAttributeValue, UserPlatformQuota,
-		UserSubscription []ent.Interceptor
+		ChannelMonitorGroupStats, ChannelMonitorHistory, ChannelMonitorRequestTemplate,
+		ErrorPassthroughRule, Group, IdempotencyRecord, IdentityAdoptionDecision,
+		PaymentAuditLog, PaymentOrder, PaymentProviderInstance, PendingAuthSession,
+		PromoCode, PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting,
+		SubscriptionPlan, TLSFingerprintProfile, UsageCleanupTask, UsageLog, User,
+		UserAllowedGroup, UserAttributeDefinition, UserAttributeValue,
+		UserPlatformQuota, UserSubscription []ent.Interceptor
 	}
 )
 

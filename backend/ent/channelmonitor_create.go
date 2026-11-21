@@ -225,6 +225,20 @@ func (_c *ChannelMonitorCreate) SetNillableResponseFormat(v *string) *ChannelMon
 	return _c
 }
 
+// SetGroupID sets the "group_id" field.
+func (_c *ChannelMonitorCreate) SetGroupID(v int64) *ChannelMonitorCreate {
+	_c.mutation.SetGroupID(v)
+	return _c
+}
+
+// SetNillableGroupID sets the "group_id" field if the given value is not nil.
+func (_c *ChannelMonitorCreate) SetNillableGroupID(v *int64) *ChannelMonitorCreate {
+	if v != nil {
+		_c.SetGroupID(*v)
+	}
+	return _c
+}
+
 // AddHistoryIDs adds the "history" edge to the ChannelMonitorHistory entity by IDs.
 func (_c *ChannelMonitorCreate) AddHistoryIDs(ids ...int64) *ChannelMonitorCreate {
 	_c.mutation.AddHistoryIDs(ids...)
@@ -558,6 +572,10 @@ func (_c *ChannelMonitorCreate) createSpec() (*ChannelMonitor, *sqlgraph.CreateS
 	if value, ok := _c.mutation.ResponseFormat(); ok {
 		_spec.SetField(channelmonitor.FieldResponseFormat, field.TypeString, value)
 		_node.ResponseFormat = value
+	}
+	if value, ok := _c.mutation.GroupID(); ok {
+		_spec.SetField(channelmonitor.FieldGroupID, field.TypeInt64, value)
+		_node.GroupID = &value
 	}
 	if nodes := _c.mutation.HistoryIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -930,6 +948,30 @@ func (u *ChannelMonitorUpsert) UpdateResponseFormat() *ChannelMonitorUpsert {
 	return u
 }
 
+// SetGroupID sets the "group_id" field.
+func (u *ChannelMonitorUpsert) SetGroupID(v int64) *ChannelMonitorUpsert {
+	u.Set(channelmonitor.FieldGroupID, v)
+	return u
+}
+
+// UpdateGroupID sets the "group_id" field to the value that was provided on create.
+func (u *ChannelMonitorUpsert) UpdateGroupID() *ChannelMonitorUpsert {
+	u.SetExcluded(channelmonitor.FieldGroupID)
+	return u
+}
+
+// AddGroupID adds v to the "group_id" field.
+func (u *ChannelMonitorUpsert) AddGroupID(v int64) *ChannelMonitorUpsert {
+	u.Add(channelmonitor.FieldGroupID, v)
+	return u
+}
+
+// ClearGroupID clears the value of the "group_id" field.
+func (u *ChannelMonitorUpsert) ClearGroupID() *ChannelMonitorUpsert {
+	u.SetNull(channelmonitor.FieldGroupID)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -1287,6 +1329,34 @@ func (u *ChannelMonitorUpsertOne) SetResponseFormat(v string) *ChannelMonitorUps
 func (u *ChannelMonitorUpsertOne) UpdateResponseFormat() *ChannelMonitorUpsertOne {
 	return u.Update(func(s *ChannelMonitorUpsert) {
 		s.UpdateResponseFormat()
+	})
+}
+
+// SetGroupID sets the "group_id" field.
+func (u *ChannelMonitorUpsertOne) SetGroupID(v int64) *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.SetGroupID(v)
+	})
+}
+
+// AddGroupID adds v to the "group_id" field.
+func (u *ChannelMonitorUpsertOne) AddGroupID(v int64) *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.AddGroupID(v)
+	})
+}
+
+// UpdateGroupID sets the "group_id" field to the value that was provided on create.
+func (u *ChannelMonitorUpsertOne) UpdateGroupID() *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.UpdateGroupID()
+	})
+}
+
+// ClearGroupID clears the value of the "group_id" field.
+func (u *ChannelMonitorUpsertOne) ClearGroupID() *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.ClearGroupID()
 	})
 }
 
@@ -1813,6 +1883,34 @@ func (u *ChannelMonitorUpsertBulk) SetResponseFormat(v string) *ChannelMonitorUp
 func (u *ChannelMonitorUpsertBulk) UpdateResponseFormat() *ChannelMonitorUpsertBulk {
 	return u.Update(func(s *ChannelMonitorUpsert) {
 		s.UpdateResponseFormat()
+	})
+}
+
+// SetGroupID sets the "group_id" field.
+func (u *ChannelMonitorUpsertBulk) SetGroupID(v int64) *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.SetGroupID(v)
+	})
+}
+
+// AddGroupID adds v to the "group_id" field.
+func (u *ChannelMonitorUpsertBulk) AddGroupID(v int64) *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.AddGroupID(v)
+	})
+}
+
+// UpdateGroupID sets the "group_id" field to the value that was provided on create.
+func (u *ChannelMonitorUpsertBulk) UpdateGroupID() *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.UpdateGroupID()
+	})
+}
+
+// ClearGroupID clears the value of the "group_id" field.
+func (u *ChannelMonitorUpsertBulk) ClearGroupID() *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.ClearGroupID()
 	})
 }
 

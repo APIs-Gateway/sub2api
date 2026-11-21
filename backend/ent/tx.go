@@ -32,6 +32,8 @@ type Tx struct {
 	ChannelMonitor *ChannelMonitorClient
 	// ChannelMonitorDailyRollup is the client for interacting with the ChannelMonitorDailyRollup builders.
 	ChannelMonitorDailyRollup *ChannelMonitorDailyRollupClient
+	// ChannelMonitorGroupStats is the client for interacting with the ChannelMonitorGroupStats builders.
+	ChannelMonitorGroupStats *ChannelMonitorGroupStatsClient
 	// ChannelMonitorHistory is the client for interacting with the ChannelMonitorHistory builders.
 	ChannelMonitorHistory *ChannelMonitorHistoryClient
 	// ChannelMonitorRequestTemplate is the client for interacting with the ChannelMonitorRequestTemplate builders.
@@ -224,6 +226,7 @@ func (tx *Tx) init() {
 	tx.AuthIdentityChannel = NewAuthIdentityChannelClient(tx.config)
 	tx.ChannelMonitor = NewChannelMonitorClient(tx.config)
 	tx.ChannelMonitorDailyRollup = NewChannelMonitorDailyRollupClient(tx.config)
+	tx.ChannelMonitorGroupStats = NewChannelMonitorGroupStatsClient(tx.config)
 	tx.ChannelMonitorHistory = NewChannelMonitorHistoryClient(tx.config)
 	tx.ChannelMonitorRequestTemplate = NewChannelMonitorRequestTemplateClient(tx.config)
 	tx.ErrorPassthroughRule = NewErrorPassthroughRuleClient(tx.config)

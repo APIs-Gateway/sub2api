@@ -33,6 +33,9 @@ type ChannelMonitor func(*sql.Selector)
 // ChannelMonitorDailyRollup is the predicate function for channelmonitordailyrollup builders.
 type ChannelMonitorDailyRollup func(*sql.Selector)
 
+// ChannelMonitorGroupStats is the predicate function for channelmonitorgroupstats builders.
+type ChannelMonitorGroupStats func(*sql.Selector)
+
 // ChannelMonitorHistory is the predicate function for channelmonitorhistory builders.
 type ChannelMonitorHistory func(*sql.Selector)
 
