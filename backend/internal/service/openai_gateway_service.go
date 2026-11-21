@@ -4902,7 +4902,7 @@ func openAIStreamClientOutputStarted(c *gin.Context, localStarted bool) bool {
 // Lifecycle metadata and transport heartbeats are not model output.
 func openAIStreamEventIsMetadata(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "response.created", "response.in_progress", "keepalive":
+	case "response.created", "response.queued", "response.in_progress", "response.metadata", "keepalive":
 		return true
 	default:
 		return false
@@ -4927,8 +4927,105 @@ func openAIStreamDataStartsClientOutput(data, eventType string) bool {
 		return !openAIStreamFailedEventShouldFailover(payload, extractOpenAISSEErrorMessage(payload))
 	case "response.output_item.added", "response.content_part.added", "response.reasoning_summary_part.added":
 		return openAIStreamAddedEventStartsClientOutput([]byte(trimmed), eventType)
+	case "response.queued", "response.metadata",
+		"response.output_text.delta", "response.reasoning_summary_text.delta", "response.reasoning_text.delta",
+		"response.function_call_arguments.delta", "response.custom_tool_call_input.delta", "response.refusal.delta",
+		"response.output_text.done", "response.reasoning_summary_text.done", "response.reasoning_text.done", "response.refusal.done",
+		"response.content_part.done", "response.reasoning_summary_part.done":
+		return !openAIStreamExplicitEmptyReplayPayload(trimmed, strings.TrimSpace(eventType))
 	}
 	return !openAIStreamEventIsMetadata(eventType)
+}
+
+// openAIStreamReplayObject accepts one unambiguous JSON object. Duplicate keys
+// cannot prove emptiness: different consumers may select different values.
+// This stricter reader is used only for the newly retryable empty event forms.
+func openAIStreamReplayObject(raw []byte) (map[string]json.RawMessage, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil, false
+	}
+	fields := make(map[string]json.RawMessage)
+	for decoder.More() {
+		token, err = decoder.Token()
+		name, ok := token.(string)
+		if err != nil || !ok {
+			return nil, false
+		}
+		if _, duplicate := fields[name]; duplicate {
+			return nil, false
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, false
+		}
+		fields[name] = value
+	}
+	if token, err = decoder.Token(); err != nil || token != json.Delim('}') {
+		return nil, false
+	}
+	var extra json.RawMessage
+	if decoder.Decode(&extra) != io.EOF {
+		return nil, false
+	}
+	return fields, true
+}
+
+// Explicit typed emptiness permits a pre-output retry; missing/null/non-string
+// fields, unknown parts and conflicting type declarations remain conservative.
+// All actual callers derive eventType from the JSON payload, not an SSE label.
+func openAIStreamExplicitEmptyReplayPayload(data, eventType string) bool {
+	fields, ok := openAIStreamReplayObject([]byte(data))
+	if !ok {
+		return false
+	}
+	var payloadType string
+	if json.Unmarshal(fields["type"], &payloadType) != nil || payloadType != eventType {
+		return false
+	}
+	field := ""
+	switch eventType {
+	case "response.queued", "response.metadata":
+		return true
+	case "response.output_text.delta", "response.reasoning_summary_text.delta", "response.reasoning_text.delta",
+		"response.function_call_arguments.delta", "response.custom_tool_call_input.delta", "response.refusal.delta":
+		field = "delta"
+	case "response.output_text.done", "response.reasoning_summary_text.done", "response.reasoning_text.done":
+		field = "text"
+	case "response.refusal.done":
+		field = "refusal"
+	case "response.content_part.done", "response.reasoning_summary_part.done":
+		part, valid := openAIStreamReplayObject(fields["part"])
+		if !valid {
+			return false
+		}
+		var partType string
+		if json.Unmarshal(part["type"], &partType) != nil {
+			return false
+		}
+		if eventType == "response.reasoning_summary_part.done" {
+			if partType != "summary_text" {
+				return false
+			}
+			field = "text"
+		} else {
+			switch partType {
+			case "output_text":
+				field = "text"
+			case "refusal":
+				field = "refusal"
+			default:
+				return false
+			}
+		}
+		fields = part
+	default:
+		return false
+	}
+	// A JSON string has only one representation when its decoded value is
+	// empty. This never treats null, an absent field or another type as empty.
+	return bytes.Equal(bytes.TrimSpace(fields[field]), []byte(`""`))
 }
 
 // openAIStreamAddedEventStartsClientOutput 判断 *.added 结构事件是否已携带客户端语义内容。
