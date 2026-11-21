@@ -125,7 +125,7 @@ func TestGrokRequestRefusalHandlerPoolAndQueuedFraming(t *testing.T) {
 					}}
 					rateLimit := service.NewRateLimitService(repo, usage, cfg, nil, nil)
 					rateLimit.SetSettingService(service.NewSettingService(&wechatOAuthSettingRepoStub{values: map[string]string{"openai_advanced_scheduler_enabled": "true"}}, cfg))
-					gateway := service.NewOpenAIGatewayService(repo, usage, billingRepo, userRepo, nil, nil, nil, cfg, nil, concurrency, service.NewBillingService(cfg, nil), rateLimit, billing, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+					gateway := service.NewOpenAIGatewayService(repo, usage, billingRepo, userRepo, nil, nil, nil, cfg, nil, concurrency, service.NewBillingService(cfg, nil), rateLimit, billing, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil)
 					// Seed a different account to prove the advanced scheduler is
 					// enabled even if another test left its five-second cache off.
 					require.Eventually(t, func() bool {

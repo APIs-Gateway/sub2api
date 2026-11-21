@@ -490,7 +490,7 @@ func newOpenAIResponsesWebSocketAttributionHandlerWithRepo(
 	gatewaySvc := service.NewOpenAIGatewayService(
 		accountRepo, nil, nil, nil, nil, nil, nil, cfg, nil, schedulerConcurrency,
 		service.NewBillingService(cfg, nil), nil, billingCacheSvc, nil, &service.DeferredService{},
-		nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil,
 	)
 	return &OpenAIGatewayHandler{
 		gatewayService:                gatewaySvc,

@@ -50,7 +50,7 @@ func TestResponsesInputTokensNormalModeNeverBillsOrReserves(t *testing.T) {
 			upstream := &alphaSearchHTTPUpstream{responses: []*http.Response{{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"object":"response.input_tokens","input_tokens":42}`))}}}
 			account := service.Account{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Credentials: map[string]any{"api_key": "key", "base_url": tc.base}}
 			concurrency := service.NewConcurrencyService(nil)
-			gateway := service.NewOpenAIGatewayService(openAIImagesFailoverAccountRepo{accounts: []service.Account{account}}, usage, billing, userRepo, nil, nil, nil, cfg, nil, concurrency, service.NewBillingService(cfg, nil), nil, cache, upstream, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			gateway := service.NewOpenAIGatewayService(openAIImagesFailoverAccountRepo{accounts: []service.Account{account}}, usage, billing, userRepo, nil, nil, nil, cfg, nil, concurrency, service.NewBillingService(cfg, nil), nil, cache, upstream, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 			h := NewOpenAIGatewayHandler(gateway, concurrency, cache, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
 			h.usageRecordWorkerPool = newUsageRecordTestPool(t)
 			key := alphaSearchAPIKey(service.PlatformOpenAI, 5102)

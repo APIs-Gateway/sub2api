@@ -112,7 +112,7 @@ func newPausedQueuedSlotHandler(t *testing.T, repo *pausedQueuedSlotAccountRepo,
 	gateway := service.NewOpenAIGatewayService(
 		repo, usageRepo, nil, nil, nil, nil, nil, cfg, nil, concurrency,
 		service.NewBillingService(cfg, nil), nil, billingCache, upstream,
-		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
 	)
 	h := NewOpenAIGatewayHandler(gateway, concurrency, billingCache,
 		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg),

@@ -26,13 +26,7 @@ func (hs *chainRespHarness) serveChatCtx(ctx context.Context, body string) *http
 	return rec
 }
 
-func (s *chainChatStableStore) entered() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.enters
-}
-
-// chainChatGroupRepo 只实现旧稳定优先沿分组指针解析兜底档位用到的 GetByIDLite。
+// chainChatGroupRepo 只实现 GetByIDLite，供分组仓储接口测试使用。
 type chainChatGroupRepo struct {
 	service.GroupRepository
 	groups map[int64]*service.Group
@@ -159,24 +153,4 @@ func TestChatChain_UpstreamClientErrorIsTerminalAndMatchesLegacy(t *testing.T) {
 	require.Equal(t, baseline.body, got.body)
 	require.Empty(t, o.breaker.failedGroups())
 	require.EqualValues(t, 1, hs.routes.calls.Load())
-}
-
-// 没有链（开关关闭）时旧「稳定优先」照旧：主分组没号，沿分组指针兜底到下一档并进入兜底态；
-// 用量行只写旧机制的列（group_id 为主分组、没有 served 列）。
-func TestChatChain_LegacyStablePriorityStillFallsBackWhenTheChainIsOff(t *testing.T) {
-	store := &chainChatStableStore{}
-	o := chainRespBase()
-	o.switchOn = false
-	fallbackID := int64(2)
-	o.primary.StablePriorityFallbackGroupID = &fallbackID
-	o.stableStore = store
-	o.stableKey = true
-	o.groupRepo = &chainChatGroupRepo{groups: map[int64]*service.Group{2: chainRespGroup(2, 2, 0)}}
-	o.schedulable[1] = nil
-	got, _ := runChainChatCase(t, o, chainChatBodyJSON)
-
-	require.Equal(t, http.StatusOK, got.status)
-	require.Equal(t, []int64{21}, got.calls, "旧机制：沿分组指针兜底到分组 2 的账号")
-	require.Equal(t, 1, store.entered(), "进入兜底态")
-	requireNoServedColumns(t, got.usage, 1)
 }

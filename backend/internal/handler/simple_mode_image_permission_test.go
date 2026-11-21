@@ -25,7 +25,7 @@ func TestSimpleModeEligibleImagesReachUpstreamWhileManualGroupStaysDenied(t *tes
 			repo := &openAIImagesBalanceSwitchAccountRepo{openAIImagesFailoverAccountRepo: openAIImagesFailoverAccountRepo{accounts: []service.Account{{ID: 8802, Name: "image-account", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Credentials: map[string]any{"api_key": "test", "base_url": "https://images.example.test/v1"}}}}}
 			upstream := &openAIImagesBalanceSwitchUpstream{}
 			cfg := &config.Config{RunMode: config.RunModeSimple, Gateway: config.GatewayConfig{DisableOpenAIImagesStreaming: true}}
-			gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, upstream, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, upstream, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 			billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
 			t.Cleanup(billing.Stop)
 			h := NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(nil), billing, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
@@ -64,7 +64,7 @@ func TestSimpleModeEligibleResponsesHandlerReachUpstreamWhileManualGroupStaysDen
 		repo := &openAIImagesFailoverAccountRepo{accounts: []service.Account{{ID: 8802, Name: "response-account", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Credentials: map[string]any{"api_key": "test", "base_url": "https://responses.example.test/v1"}, Extra: map[string]any{"openai_responses_supported": true}}}}
 		upstream := &simpleModeResponsesImageUpstream{}
 		cfg := &config.Config{RunMode: config.RunModeSimple}
-		gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, upstream, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, upstream, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 		billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
 		t.Cleanup(billing.Stop)
 		h := NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(nil), billing, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)

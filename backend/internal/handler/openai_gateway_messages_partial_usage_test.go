@@ -125,8 +125,6 @@ func TestOpenAIMessages_RawChatFallbackStreamReadErrorRecordsPartialUsage(t *tes
 		nil,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 
@@ -253,8 +251,6 @@ func TestOpenAIMessages_ResponsesClientCancelDuringReadErrorRecordsUsageWithoutF
 		nil, // channelService
 		nil, // balanceNotifyService
 		nil, // settingService
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 	cache := &concurrencyCacheMock{
@@ -406,8 +402,6 @@ func TestOpenAIMessages_RawChatFallbackClientDisconnectDuringStreamReadErrorReco
 		nil,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 
@@ -541,8 +535,6 @@ func TestOpenAIMessages_RecordUsageBillingErrorLogsFailure(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 
@@ -671,8 +663,6 @@ func TestOpenAIMessages_ForwardGenericErrorWithNilResultSkipsUsageRecord(t *test
 		nil,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 

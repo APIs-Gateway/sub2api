@@ -3602,24 +3602,18 @@ func cyberPolicyUserVisibleGroup(apiKey *service.APIKey) (*int64, string) {
 // 当前请求已发给用户，本方法只做事后记录，不影响响应。forwardErrored 为 true 时才写用量行；
 // Messages 错误路径若已有可提交的 terminal usage 会传 false，改走正常 RecordUsage，
 // 避免两条路径重复计费。每请求至多记录一次。
-// stable 为可选的稳定优先调度结果：仅 chat_completions stable 兜底路径传入，
-// 用于让 cyber 计费行按"实际服务档位组"计费（其余调用点不传，零值=按 home 组计费）。
-func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string, stable ...service.OpenAIAccountScheduleDecision) {
+func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string) {
 	parent := context.Background()
 	if c != nil && c.Request != nil {
 		parent = c.Request.Context()
 	}
-	h.recordCyberPolicyIfMarkedWithContext(parent, c, apiKey, account, subscription, model, forwardErrored, cyberBlockKey, channelFields, requestPayloadHash, stable...)
+	h.recordCyberPolicyIfMarkedWithContext(parent, c, apiKey, account, subscription, model, forwardErrored, cyberBlockKey, channelFields, requestPayloadHash)
 }
 
-func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithContext(parent context.Context, c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string, stable ...service.OpenAIAccountScheduleDecision) {
+func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithContext(parent context.Context, c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string) {
 	mark := service.GetOpsCyberPolicy(c)
 	if mark == nil {
 		return
-	}
-	var stableDecision service.OpenAIAccountScheduleDecision
-	if len(stable) > 0 {
-		stableDecision = stable[0]
 	}
 	if c.GetBool(cyberPolicyRecordedKey) {
 		return
@@ -3734,14 +3728,6 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithContext(parent conte
 				RequestPayloadHash:  requestPayloadHash,
 				APIKeyService:       apiKeySvc,
 				ChannelUsageFields:  channelFields,
-				// 稳定优先兜底：按实际服务档位组计费（零值时回退 home 组）。
-				StableServedGroupID:              stableDecision.StableServedGroupID,
-				StableServedRateMultiplier:       stableDecision.StableServedRateMultiplier,
-				StableServedImageRateIndependent: stableDecision.StableServedImageRateIndependent,
-				StableServedImageRateMultiplier:  stableDecision.StableServedImageRateMultiplier,
-				StableServedImagePrice1K:         stableDecision.StableServedImagePrice1K,
-				StableServedImagePrice2K:         stableDecision.StableServedImagePrice2K,
-				StableServedImagePrice4K:         stableDecision.StableServedImagePrice4K,
 			})
 		}
 		if gwSvc != nil && cyberBlockKey != "" {

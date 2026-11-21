@@ -23,9 +23,8 @@ import (
 //   - 选号 ctx 打上「补试整组饱和」标记、等槽按 hop 策略短等并最多重选一次（openAIHopSlotPolicy）；
 //   - 本跳的换号预算取 min(现有值, MaxPerHopSwitches)，并受每请求总尝试次数约束。
 //
-// 与旧「稳定优先」的关系（旧机制只覆盖 chat/completions，下线属于 PR5）：有链请求每一跳都按「未开启稳定优先」选号
-// （StablePriorityIntent 取零值，调度器直接走原始选号），所以一个请求不会既按链回退、又按旧机制沿分组指针爬。
-// 无链请求（开关关闭、没配链、链长 < 2、解析出错、forced 用户没有管理员隐藏链）仍然完全走旧机制。
+// 与旧「稳定优先」的关系（旧机制只覆盖 chat/completions，已在 PR #1729 下线）：有链请求不再走稳定优先选号。
+// 无链请求（开关关闭、没配链、链长 < 2、解析出错、forced 用户没有管理员隐藏链）走原始选号路径。
 
 // chatChannelPlan 是某个分组下的渠道映射结果（每跳重算：渠道配置按分组生效）。
 type chatChannelPlan struct {
@@ -162,19 +161,7 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 			return terminal()
 		}
 		reqLog.Debug("openai_chat_completions.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		// 有链：每一跳都不参与旧的稳定优先（零值意图，调度器走原始选号），回退完全由链决定。
-		// 无链：与引入回退链之前完全一致。
-		stableIntent := service.StablePriorityIntent{}
-		if !chained {
-			stableIntent = service.StablePriorityIntent{Enabled: key.StablePriorityEnabled || (key.User != nil && key.User.StablePriorityEnabled)}
-		}
 		modelAvailabilityDiagnoser := service.ModelAvailabilityDiagnoser(h.gatewayService)
-		if openAIStablePriorityCanFallback(key, stableIntent) {
-			// A no-account result may have traversed fallback groups. Diagnosing
-			// only the home group could turn a temporarily unavailable fallback
-			// model into a false 404, so keep the established 503 response.
-			modelAvailabilityDiagnoser = nil
-		}
 		selectAccount := func() (*service.AccountSelectionResult, service.OpenAIAccountScheduleDecision, error) {
 			if clientPolicy.pending && clientPolicy.pinnedGroupID != nil {
 				selection, decision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
@@ -182,12 +169,10 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 					forwardModel, failedAccountIDs, service.OpenAIUpstreamTransportAny,
 					service.OpenAIEndpointCapabilityChatCompletions, false, true, r.requestPlatform,
 				)
-				clientPolicy.preserveStableDecision(&decision)
 				return selection, decision, err
 			}
-			return h.gatewayService.SelectAccountWithSchedulerStable(
+			return h.gatewayService.SelectAccountWithScheduler(
 				policy.selectionContext(c.Request.Context()),
-				key.Group,
 				key.GroupID,
 				"",
 				sessionHash,
@@ -197,7 +182,6 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 				service.OpenAIEndpointCapabilityChatCompletions,
 				false,
 				true,
-				stableIntent,
 				r.requestPlatform,
 			)
 		}
@@ -237,40 +221,17 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 			return terminal()
 		}
 		if clientPolicy.exclude(h.gatewayService, c, selection, failedAccountIDs) {
-			clientPolicy.pinStableGroup(key.GroupID, scheduleDecision)
+			clientPolicy.pinStableGroup(key.GroupID)
 			reqLog.Debug("openai_chat_completions.account_client_incompatible", zap.Int64("account_id", selection.Account.ID))
 			continue
 		}
 		account := selection.Account
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai_chat_completions.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
-		if scheduleDecision.StablePriorityFallback || scheduleDecision.StablePriorityReverted {
-			reqLog.Info("openai_chat_completions.stable_priority",
-				zap.Bool("fallback", scheduleDecision.StablePriorityFallback),
-				zap.Bool("reverted", scheduleDecision.StablePriorityReverted),
-				zap.String("state", scheduleDecision.StablePriorityState),
-				zap.Int64p("home_group", key.GroupID),
-				zap.Int64("served_group", scheduleDecision.StableServedGroupID),
-				zap.Int64("account_id", account.ID),
-			)
-		}
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		// 稳定优先兜底到 served 组时，须统一按"实际服务组"处理：
-		//  1) 粘性会话绑定的 groupID 须与调度器读取侧一致，否则后续请求换命名空间、粘性失效、在兜底账号间抖动；
-		//  2) 渠道映射须按 served 组重算，否则转发体与计费模型字段会沿用 home 组映射而出错。
-		// 有链时 StableServedGroupID 恒为 0（上面没有开启稳定优先），这里不会生效；粘性绑定用的是本跳的分组。
 		stickyGroupID := key.GroupID
 		effectiveMapping := channelMapping
-		homeGroupID := int64(0)
-		if key.GroupID != nil {
-			homeGroupID = *key.GroupID
-		}
-		if served := scheduleDecision.StableServedGroupID; served > 0 && served != homeGroupID {
-			servedGroupID := served
-			stickyGroupID = &servedGroupID
-			effectiveMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), &servedGroupID, r.reqModel)
-		}
 		// decision 必须来自刚才同一次 Select，groupID 必须是本跳的分组（粘性绑定以分组为键）。
 		accountReleaseFunc, slotStatus := h.acquireResponsesAccountSlotForHop(c, stickyGroupID, sessionHash, selection, scheduleDecision, policy, r.reqStream, r.streamStarted, reqLog)
 		if slotStatus == accountSlotRetrySelection {
@@ -302,7 +263,7 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 		// 预占被拒时本跳没有真正调用上游（attempts 不增加），直接按终止收尾：与无链一致，不退回分组层 RPM 计数
 		// （ReleaseHopGroupRPMIfNotServed 只对跳过和「未写错误的可回退失败」退回）。
 		// 心跳字节（SSE 注释行）不算内容交付：与 Responses 入口同口径取扣除心跳后的 Size。
-		if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: key, Account: account, Model: r.reqModel, Body: forwardBody, ChannelUsageFields: effectiveMapping.ToUsageFields(r.reqModel, ""), StableDecision: &scheduleDecision}, accountReleaseFunc, func(status int, code, message string) {
+		if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: key, Account: account, Model: r.reqModel, Body: forwardBody, ChannelUsageFields: effectiveMapping.ToUsageFields(r.reqModel, "")}, accountReleaseFunc, func(status int, code, message string) {
 			h.handleStreamingAwareError(c, status, code, message, stream())
 		}) {
 			return terminal()
@@ -344,39 +305,24 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 		clientIP := ip.GetClientIP(c)
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account)
-		// 稳定优先方案 Y：兜底时按实际服务档位组倍率计费（normal 态为 0，不影响正常计费；有链时恒为 0，计价由影子 Key 的分组决定）。
-		stableServedGroupID := scheduleDecision.StableServedGroupID
-		stableServedRate := scheduleDecision.StableServedRateMultiplier
-		stableServedImageIndependent := scheduleDecision.StableServedImageRateIndependent
-		stableServedImageRate := scheduleDecision.StableServedImageRateMultiplier
-		stableServedImagePrice1K := scheduleDecision.StableServedImagePrice1K
-		stableServedImagePrice2K := scheduleDecision.StableServedImagePrice2K
-		stableServedImagePrice4K := scheduleDecision.StableServedImagePrice4K
 
 		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 		submitChatUsage := func(result *service.OpenAIForwardResult) {
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-					Result:                           result,
-					APIKey:                           key,
-					User:                             key.User,
-					Account:                          account,
-					Subscription:                     r.subscription,
-					InboundEndpoint:                  inboundEndpoint,
-					UpstreamEndpoint:                 upstreamEndpoint,
-					UserAgent:                        userAgent,
-					IPAddress:                        clientIP,
-					APIKeyService:                    h.apiKeyService,
-					ChannelUsageFields:               effectiveMapping.ToUsageFields(r.reqModel, result.UpstreamModel),
-					CyberBlocked:                     cyberBlocked,
-					UpstreamResponseModel:            upstreamResponseModel,
-					StableServedGroupID:              stableServedGroupID,
-					StableServedRateMultiplier:       stableServedRate,
-					StableServedImageRateIndependent: stableServedImageIndependent,
-					StableServedImageRateMultiplier:  stableServedImageRate,
-					StableServedImagePrice1K:         stableServedImagePrice1K,
-					StableServedImagePrice2K:         stableServedImagePrice2K,
-					StableServedImagePrice4K:         stableServedImagePrice4K,
+					Result:                result,
+					APIKey:                key,
+					User:                  key.User,
+					Account:               account,
+					Subscription:          r.subscription,
+					InboundEndpoint:       inboundEndpoint,
+					UpstreamEndpoint:      upstreamEndpoint,
+					UserAgent:             userAgent,
+					IPAddress:             clientIP,
+					APIKeyService:         h.apiKeyService,
+					ChannelUsageFields:    effectiveMapping.ToUsageFields(r.reqModel, result.UpstreamModel),
+					CyberBlocked:          cyberBlocked,
+					UpstreamResponseModel: upstreamResponseModel,
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.chat_completions"),

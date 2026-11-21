@@ -33,7 +33,7 @@ func (postSlotQueueFullCache) IncrementAccountWaitCount(context.Context, int64, 
 func newPostSlotBranchHandler(repo service.AccountRepository, cache service.ConcurrencyCache) *OpenAIGatewayHandler {
 	svc := service.NewOpenAIGatewayService(
 		repo, nil, nil, nil, nil, nil, nil, &config.Config{}, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	return &OpenAIGatewayHandler{
 		gatewayService:    svc,

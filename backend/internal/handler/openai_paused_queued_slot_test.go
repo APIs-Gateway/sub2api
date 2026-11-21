@@ -45,7 +45,7 @@ func TestOpenAIAcquireAccountSlot_PauseDuringWaitRetriesSelection(t *testing.T) 
 	}
 	svc := service.NewOpenAIGatewayService(
 		repo, nil, nil, nil, nil, nil, nil, &config.Config{}, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	h := &OpenAIGatewayHandler{
 		gatewayService:    svc,
@@ -85,7 +85,7 @@ func TestOpenAIAcquireAccountSlot_PauseAfterSchedulerAcquiredReleasesSlot(t *tes
 	repo.account.Schedulable = false
 	svc := service.NewOpenAIGatewayService(
 		repo, nil, nil, nil, nil, nil, nil, &config.Config{}, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	h := &OpenAIGatewayHandler{gatewayService: svc}
 	recorder := httptest.NewRecorder()

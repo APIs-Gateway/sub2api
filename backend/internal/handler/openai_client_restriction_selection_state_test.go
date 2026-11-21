@@ -43,34 +43,6 @@ func TestClientRestrictedSelectionState_CompatibleBusyAndBudgetAreNotAllRestrict
 	require.False(t, s.rejectExhausted(h, c, service.ErrNoAvailableAccounts, false))
 }
 
-func TestClientRestrictedSelectionState_StableDecisionKeepsNewAccountAndServedPricing(t *testing.T) {
-	home := int64(1)
-	price := 3.0
-	s := &openAIClientRestrictionSelection{}
-	s.pinStableGroup(&home, service.OpenAIAccountScheduleDecision{
-		StablePriorityState: service.StablePriorityModeFallback, StablePriorityFallback: true, StablePriorityReverted: true,
-		StableServedGroupID: 2, StableServedRateMultiplier: 2.5,
-		StableServedImageRateIndependent: true, StableServedImageRateMultiplier: 4,
-		StableServedImagePrice1K: &price, StableServedImagePrice2K: &price, StableServedImagePrice4K: &price,
-	})
-	require.EqualValues(t, 2, *s.pinnedGroupID)
-	d := service.OpenAIAccountScheduleDecision{SelectedAccountID: 22, Layer: "actual-new-selection", CandidateCount: 4}
-	s.preserveStableDecision(&d)
-	require.EqualValues(t, 22, d.SelectedAccountID)
-	require.Equal(t, "actual-new-selection", d.Layer)
-	require.Equal(t, 4, d.CandidateCount)
-	require.Equal(t, service.StablePriorityModeFallback, d.StablePriorityState)
-	require.True(t, d.StablePriorityFallback)
-	require.True(t, d.StablePriorityReverted)
-	require.EqualValues(t, 2, d.StableServedGroupID)
-	require.Equal(t, 2.5, d.StableServedRateMultiplier)
-	require.True(t, d.StableServedImageRateIndependent)
-	require.Equal(t, 4.0, d.StableServedImageRateMultiplier)
-	require.Equal(t, &price, d.StableServedImagePrice1K)
-	require.Equal(t, &price, d.StableServedImagePrice2K)
-	require.Equal(t, &price, d.StableServedImagePrice4K)
-}
-
 func TestClientRestrictedSelectionState_NilSelectionDoesNotCreateOwnershipOrPolicyEvidence(t *testing.T) {
 	// Defensive empty results have no owned callback to release and must not be
 	// classified as an incompatible account or alter the caller's exclusions.
