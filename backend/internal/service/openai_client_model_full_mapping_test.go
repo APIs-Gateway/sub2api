@@ -236,3 +236,26 @@ func TestClientModelFullMapping_MismatchCheckNotesForeign(t *testing.T) {
 	require.Nil(t, svc.checkUpstreamModelMismatch(c2, nil, "", nil, fullMapC, fullMapC, false, false, OpenAIUsage{}, fullMapA))
 	require.Equal(t, fullMapC, scrubClientVisibleModelText(c2, fullMapC))
 }
+
+// F2：被「容忍」的上游回显（日期快照等，upstreamModelMatches 判一致）也要记进外来名；
+// 比对、打标与拦截行为不变（一致 → 不打标、不拦截）。
+func TestClientModelFullMapping_MismatchCheckNotesToleratedEcho(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	v, _ := newClientModelView(fullMapA, fullMapC)
+	setClientModelView(c, v)
+	svc := &OpenAIGatewayService{}
+	const snapshot = fullMapC + "-20251101"
+
+	require.Nil(t, svc.checkUpstreamModelMismatch(c, nil, "", nil, fullMapC, snapshot, false, true, OpenAIUsage{}, fullMapA))
+
+	require.Nil(t, GetOpsUpstreamModelMismatch(c), "容忍的回显不打标")
+	require.Equal(t, "model "+fullMapA+" overloaded", scrubClientVisibleModelText(c, "model "+snapshot+" overloaded"))
+
+	// 回显与发送完全一致：不追加外来名（view 不变）
+	c2, _ := gin.CreateTestContext(httptest.NewRecorder())
+	v2, _ := newClientModelView(fullMapA)
+	setClientModelView(c2, v2)
+	require.Nil(t, svc.checkUpstreamModelMismatch(c2, nil, "", nil, fullMapC, fullMapC, false, true, OpenAIUsage{}, fullMapA))
+	require.Equal(t, snapshot, scrubClientVisibleModelText(c2, snapshot))
+}

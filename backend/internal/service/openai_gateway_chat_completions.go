@@ -507,6 +507,8 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	}
 	if strings.TrimSpace(finalResponse.Status) == "failed" {
 		payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": finalResponse})
+		// 失败分支早于下面的模型比对：先把上游回显的 model 记进外来名，写给客户端的文案才能换成 A。
+		noteClientModelViewForeign(c, strings.TrimSpace(finalResponse.Model))
 		// cyber_policy 致命不可重试：不 failover，以 Chat Completions 错误格式回写（F4），
 		// 标记供 handler 事后写风控/邮件/tokens=0 用量行。
 		if hit, code, msg := detectOpenAICyberPolicy(payload); hit {
@@ -783,6 +785,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			beforeError := semanticOutputBeforePayload
 			outputBeforeError = &beforeError
 			payloadBytes := []byte(payload)
+			// 失败分支早于下面的模型比对：先把上游回显的 model 记进外来名，写给客户端的文案才能换成 A。
+			noteClientModelViewForeign(c, extractUpstreamResponseModel(payloadBytes))
 			message := extractOpenAISSEErrorMessage(payloadBytes)
 			if hit, code, msg := detectOpenAICyberPolicy(payloadBytes); hit {
 				// cyber_policy 致命且不可重试：不 failover。下发标准 error chunk +

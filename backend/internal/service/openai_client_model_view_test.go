@@ -46,7 +46,7 @@ func TestClientModelViewScrubTextExtra(t *testing.T) {
 	require.Equal(t, "model:deepseek-v4-pro", v.scrubText("model:deepseek-v4.1-flash"))
 	require.Equal(t, "vendor:deepseek-v4-pro", v.scrubText("vendor:deepseek-v4.1-flash"))
 	require.Equal(t, "us-east:deepseek-v4-pro", v.scrubText("us-east:deepseek-v4.1-flash"))
-	require.Equal(t, "deepseek-v4-pro", v.scrubText("a/b/c/deepseek-v4.1-flash"))
+	require.Equal(t, "a/b/deepseek-v4-pro", v.scrubText("a/b/c/deepseek-v4.1-flash")) // `/` 前缀只吞紧邻的一段
 	require.Equal(t, "deepseek-v4-pro", v.scrubText("cn:deepseek-v4.1-flash"))
 	// 倍率后缀不生成匹配器，靠吞并规则处理；裸写的 `0.11x` 不被吞
 	require.Equal(t, "deepseek-v4-pro 0.11x", v.scrubText("deepseek-v4.1-flash 0.11x"))
@@ -65,11 +65,11 @@ func TestClientModelViewScrubTextExtra(t *testing.T) {
 	require.Equal(t, "GLM-5.3-flash", glm.scrubText("GLM-5.3-flash"))
 	require.Equal(t, "glm-5.3-flash", glm.scrubText("cn:GLM-5.3-flash"))
 	// withForeign 不修改原值
-	base, _ := newClientModelView("a-b", "x-y")
-	ext := base.withForeign("z-w")
-	require.Equal(t, "z-w", base.scrubText("z-w"))
-	require.Equal(t, "a-b", ext.scrubText("z-w"))
-	require.Equal(t, "a-b", ext.scrubText("x-y"))
+	base, _ := newClientModelView("a-b", "xx-yy")
+	ext := base.withForeign("zz-ww")
+	require.Equal(t, "zz-ww", base.scrubText("zz-ww"))
+	require.Equal(t, "a-b", ext.scrubText("zz-ww"))
+	require.Equal(t, "a-b", ext.scrubText("xx-yy"))
 }
 
 func TestClientModelViewAlignPayload(t *testing.T) {
@@ -188,4 +188,80 @@ func TestClientModelViewNoteForeignPlausibleOnly(t *testing.T) {
 	require.Equal(t, "deepseek-v4-pro and deepseek-v4-pro, auto", scrubClientVisibleModelText(c, "o3-x and vendor/Foo, auto"))
 	noteClientModelViewForeign(c, "glm5")
 	require.Equal(t, "deepseek-v4-pro", scrubClientVisibleModelText(c, "glm5"))
+}
+
+// F1：外来名的每个变体都要过「像模型名」门槛，拆出来的尾巴（`auto`、`default`、`latest`）不能变成全文匹配的普通词。
+func TestClientModelViewVariantsMustBePlausible(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	base, _ := newClientModelView("deepseek-v4-pro")
+	setClientModelView(c, base)
+	noteClientModelViewForeign(c, "combo/auto")
+	noteClientModelViewForeign(c, "openrouter/auto")
+	noteClientModelViewForeign(c, "v2:default")
+	v, ok := clientModelViewFrom(c)
+	require.True(t, ok)
+
+	in := `{"type":"response.completed","response":{"tool_choice":"auto","service_tier":"default","model":"combo/auto"}}`
+	out := v.alignPayload([]byte(in))
+	require.Equal(t, "auto", gjson.GetBytes(out, "response.tool_choice").String())
+	require.Equal(t, "default", gjson.GetBytes(out, "response.service_tier").String())
+	require.Equal(t, "deepseek-v4-pro", gjson.GetBytes(out, "response.model").String())
+	require.Equal(t, "use auto and default", v.scrubText("use auto and default"))
+
+	// 构造 view 时传入的外来名同样适用
+	llama, _ := newClientModelView("deepseek-v4-pro", "llama3:latest")
+	require.Equal(t, "latest version", llama.scrubText("latest version"))
+	// 带前缀的整名仍整体命中（尾巴过不了门槛，靠整名匹配）
+	require.Equal(t, "run deepseek-v4-pro now", llama.scrubText("run llama3:latest now"))
+	require.Equal(t, "deepseek-v4-pro overloaded", v.scrubText("combo/auto overloaded"))
+}
+
+// F3：`/` 前缀只吞紧邻的一段；URL 路径不被整段吞掉。
+func TestClientModelViewSlashPrefixSingleSegment(t *testing.T) {
+	v, _ := newClientModelView("deepseek-v4-pro", "deepseek-v4.1-flash")
+	require.Equal(t, "https://x.com/v1/models/deepseek-v4-pro", v.scrubText("https://x.com/v1/models/deepseek-v4.1-flash"))
+	require.Equal(t, "GET /v1/models/deepseek-v4-pro", v.scrubText("GET /v1/models/deepseek-v4.1-flash"))
+	require.Equal(t, "a/b/deepseek-v4-pro", v.scrubText("a/b/c/deepseek-v4.1-flash"))
+	require.Equal(t, "deepseek-v4-pro", v.scrubText("combo/deepseek-v4.1-flash"))
+	require.Equal(t, "a deepseek-v4-pro b", v.scrubText("a us:hub/deepseek-v4.1-flash b"))
+}
+
+// F3：A 与 C 相等（恒等映射）时不产生任何变体；prefixOnly 变体只来自本身带前缀的外来名。
+func TestClientModelViewIdentityMappingNoVariants(t *testing.T) {
+	id, _ := newClientModelView("gpt-6-luna", "gpt-6-luna")
+	require.Empty(t, id.foreign)
+	require.Equal(t, "GET /v1/models/gpt-6-luna 404", id.scrubText("GET /v1/models/gpt-6-luna 404"))
+	require.Equal(t, "cn:gpt-6-luna", id.scrubText("cn:gpt-6-luna"))
+
+	// 上游回显 A 本身（大小写不同）同样不产生变体
+	same, _ := newClientModelView("gpt-6-luna", "GPT-6-Luna")
+	require.Empty(t, same.foreign)
+
+	// 外来名本身带前缀、去前缀后等于 A：只有带前缀的出现才命中
+	pre := id.withForeign("combo/gpt-6-luna")
+	require.Equal(t, "gpt-6-luna down", pre.scrubText("combo/gpt-6-luna down"))
+	require.Equal(t, "gpt-6-luna", pre.scrubText("gpt-6-luna"))
+	require.Equal(t, "GET /v1/models/gpt-6-luna 404", pre.scrubText("GET /v1/models/gpt-6-luna 404"))
+}
+
+// F4：跳过键补全：代码、转写、日志概率、图片 base64、annotation、推理文本整棵子树不碰。
+func TestClientModelViewSkipKeysExtra(t *testing.T) {
+	v, _ := newClientModelView("deepseek-v4-pro", "deepseek-v4.1-flash")
+	for _, in := range []string{
+		`{"type":"response.code_interpreter_call_code.done","code":"print('deepseek-v4.1-flash')"}`,
+		`{"type":"response.output_text.annotation.added","annotation":{"url":"https://example.com/deepseek-v4.1-flash"}}`,
+		`{"type":"x.done","annotations":[{"title":"deepseek-v4.1-flash"}]}`,
+		`{"type":"x.done","transcript":"deepseek-v4.1-flash","logprobs":[{"token":"deepseek-v4.1-flash"}]}`,
+		`{"type":"x.done","partial_image_b64":"deepseek-v4.1-flash","b64_json":"deepseek-v4.1-flash","result":"deepseek-v4.1-flash"}`,
+		`{"type":"x.done","reasoning_text":"deepseek-v4.1-flash","reasoning_content":"deepseek-v4.1-flash"}`,
+		`{"choices":[{"delta":{"reasoning_content":"deepseek-v4.1-flash"}}],"reasoning_content":"deepseek-v4.1-flash"}`,
+	} {
+		require.Equal(t, in, string(v.alignPayload([]byte(in))), in)
+	}
+	// 不在跳过键里的 metadata / user / prompt_cache_key 照规则要改
+	m := v.alignPayload([]byte(`{"type":"x.done","metadata":{"k":"deepseek-v4.1-flash"},"user":"deepseek-v4.1-flash","prompt_cache_key":"deepseek-v4.1-flash"}`))
+	require.Equal(t, "deepseek-v4-pro", gjson.GetBytes(m, "metadata.k").String())
+	require.Equal(t, "deepseek-v4-pro", gjson.GetBytes(m, "user").String())
+	require.Equal(t, "deepseek-v4-pro", gjson.GetBytes(m, "prompt_cache_key").String())
 }

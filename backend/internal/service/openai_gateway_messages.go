@@ -538,6 +538,8 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 
 	if strings.TrimSpace(finalResponse.Status) == "failed" {
 		payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": finalResponse})
+		// 失败分支早于下面的模型比对：先把上游回显的 model 记进外来名，写给客户端的文案才能换成 A。
+		noteClientModelViewForeign(c, strings.TrimSpace(finalResponse.Model))
 		if hit, code, msg := detectOpenAICyberPolicy(payload); hit {
 			MarkOpsCyberPolicy(c, CyberPolicyMark{
 				Code:                     code,
@@ -989,6 +991,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			// 回写让客户端感知并停止重试（F4），丢弃后续转换输出。
 			if eventType == "response.failed" || isBareErrorEvent {
 				payloadBytes := []byte(payload)
+				// 失败分支早于下面的模型比对：先把上游回显的 model 记进外来名，写给客户端的文案才能换成 A。
+				noteClientModelViewForeign(c, extractUpstreamResponseModel(payloadBytes))
 				if hit, code, msg := detectOpenAICyberPolicy(payloadBytes); hit {
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
 						Code:                     code,

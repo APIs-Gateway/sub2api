@@ -296,12 +296,15 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	c *gin.Context, account *Account, upstreamRequestID string, upstreamHeaders http.Header,
 	sentModel, responseModel string, stream, canBlock bool, usage OpenAIUsage, requestedModels ...string,
 ) *UpstreamFailoverError {
+	// 上游回显了与发送不同的名字：记进 client_model_view，之后对客户端字节的文本级改写要把它换成 A。
+	// 放在比对之前：upstreamModelMatches 对日期快照、`-latest` 等「容忍」的写法也判一致并提前返回，
+	// 这些写法同样会出现在上游错误文案里。这里只追加外来名，不改变比对、打标与拦截逻辑。
+	if strings.TrimSpace(responseModel) != "" && responseModel != sentModel {
+		noteClientModelViewForeign(c, responseModel)
+	}
 	if upstreamModelMatches(sentModel, responseModel) {
 		return nil
 	}
-	// 上游回显了与发送不同的名字：记进 client_model_view，之后对客户端字节的文本级改写要把它换成 A。
-	// 比对用的是调用方读到的上游原始值，这里只追加外来名，不改变比对、打标与拦截逻辑。
-	noteClientModelViewForeign(c, responseModel)
 	if upstreamModelObserveOnly(sentModel) {
 		canBlock = false
 	}

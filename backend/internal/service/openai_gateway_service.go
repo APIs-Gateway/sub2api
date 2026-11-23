@@ -5719,6 +5719,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 			}
 			if eventType == "response.failed" {
+				// response.failed 不走上面的比对，外来名还没记：先记 response.model，
+				// 下面写给客户端的透传规则文案才能把它换成 A。
+				noteClientModelViewForeign(c, extractUpstreamResponseModel(dataBytes))
 				failedMessage = extractOpenAISSEErrorMessage(dataBytes)
 				// response.failed 自带上游已消耗的 usage（input token 通常已扣）；必须先解析
 				// 再打 cyber 标记，否则 mark 记到的是解析前的 0，导致流式 cyber 按 0 token 计费
@@ -6468,7 +6471,8 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		errMsg = upstreamMsg
 	}
 	// client_model_full_mapping：上游原文（context-window / passthrough）里的真实模型名换回用户请求的名字；
-	// upstreamMsg 本身不动（ops / 返回的 error 要保留原文）。
+	// upstreamMsg 本身不动（ops / 返回的 error 要保留原文）。errMsg 只在这里 scrub 一次：
+	// A 以 C 为前缀（如 `…:free`）时 scrub 不幂等，写出点不能再过一遍。
 	errMsg = scrubClientVisibleModelText(c, errMsg)
 
 	// Codex/Responses 端点：改写成 Codex 能用官方文案渲染的形态，上游原文只留在
@@ -6479,7 +6483,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		c.JSON(statusCode, gin.H{
 			"error": gin.H{
 				"type":    errType,
-				"message": scrubClientVisibleModelText(c, errMsg),
+				"message": errMsg,
 			},
 		})
 	}
@@ -7169,6 +7173,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				}
 			}
 			if eventType == "response.failed" {
+				// response.failed 不走上面的比对，外来名还没记：先记 response.model，
+				// 下面写给客户端的透传规则文案才能把它换成 A。
+				noteClientModelViewForeign(c, extractUpstreamResponseModel(dataBytes))
 				failedMessage = extractOpenAISSEErrorMessage(dataBytes)
 				// response.failed 自带上游已消耗的 usage（input token 通常已扣）；必须先解析
 				// 再打 cyber 标记，否则 mark 记到的是解析前的 0，导致流式 cyber 按 0 token 计费

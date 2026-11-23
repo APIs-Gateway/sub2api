@@ -337,6 +337,110 @@ func TestClientModelFullMappingErr_Responses_PassthroughRule_Stream(t *testing.T
 	require.NotContains(t, rec.Body.String(), fullMapC)
 }
 
+// F5：handleErrorResponse 对同一条文案只 scrub 一次。A 以 C 加后缀（`…:free`）时，scrub 两遍会变成 `…:free:free`。
+func TestClientModelFullMappingErr_Responses_ScrubOnce(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	a := fullMapC + ":free"
+	v, ok := newClientModelView(a, fullMapC)
+	require.True(t, ok)
+	setClientModelView(c, v)
+	body := `{"error":{"code":"context_length_exceeded","message":"Input exceeds the context window of deepseek-v4.1-flash"}}`
+
+	_, err := (&OpenAIGatewayService{}).handleErrorResponse(context.Background(), fullMapErrHTTPResponse(http.StatusBadRequest, "application/json", body), c, fullMapErrAccount(), nil, a)
+
+	require.Error(t, err)
+	msg := gjson.Get(rec.Body.String(), "error.message").String()
+	require.Equal(t, "Input exceeds the context window of "+a, msg)
+	require.Equal(t, 1, strings.Count(msg, ":free"))
+}
+
+// F6：response.failed 早于任何带 model 的事件、也早于比对时，外来名还没记进 view；
+// 失败分支写客户端之前必须先把 response.model 记进去。view 里只有 A 和 C；上游回显的 `combo/…-lite`
+// 不是 C 的任何变体（C 后面接 `-lite`，右边界不过），不记进外来名就换不掉。
+const fullMapFirstFailedEcho = "combo/deepseek-v4.1-flash-lite"
+
+const fullMapFailedFirstSSE = `data: {"type":"response.failed","response":{"id":"resp_ff","object":"response","model":"combo/deepseek-v4.1-flash-lite","status":"failed","output":[],"error":{"code":"upstream_error","message":"combo/deepseek-v4.1-flash-lite overloaded, input exceeds the context window"}}}
+
+`
+
+func TestClientModelFullMappingErr_Chat_StreamFailureFirstEvent(t *testing.T) {
+	c, rec := newFullMapErrContext(t, "/v1/chat/completions", true)
+	resp := fullMapErrHTTPResponse(http.StatusOK, "text/event-stream", fullMapFailedFirstSSE)
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	_, err := svc.handleChatStreamingResponse(resp, c, fullMapErrAccount(), fullMapA, fullMapA, fullMapC, time.Now(), 0)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), fullMapFirstFailedEcho, "returned error (logs) keeps the upstream text")
+	msg := gjson.Get(rec.Body.String(), "error.message").String()
+	require.Contains(t, msg, fullMapA)
+	require.NotContains(t, rec.Body.String(), "combo/")
+	require.NotContains(t, rec.Body.String(), "flash-lite")
+}
+
+func TestClientModelFullMappingErr_Chat_BufferedFailureFirstEvent(t *testing.T) {
+	c, rec := newFullMapErrContext(t, "/v1/chat/completions", true)
+	fullMapBindPassthroughRule(c, "overloaded")
+	resp := fullMapErrHTTPResponse(http.StatusOK, "text/event-stream", fullMapFailedFirstSSE)
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	_, err := svc.handleChatBufferedStreamingResponse(resp, c, fullMapErrAccount(), fullMapA, fullMapA, fullMapC, time.Now())
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), fullMapFirstFailedEcho, "returned error (logs) keeps the upstream text")
+	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), fullMapA)
+	require.NotContains(t, rec.Body.String(), "combo/")
+	require.NotContains(t, rec.Body.String(), "flash-lite")
+}
+
+func TestClientModelFullMappingErr_Responses_StreamFailureFirstEvent(t *testing.T) {
+	c, rec := newFullMapErrContext(t, "/v1/responses", true)
+	fullMapBindPassthroughRule(c, "overloaded")
+	resp := fullMapErrHTTPResponse(http.StatusOK, "text/event-stream", fullMapFailedFirstSSE)
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	_, err := svc.handleStreamingResponse(context.Background(), resp, c, fullMapErrAccount(), time.Now(), fullMapA, fullMapC)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), fullMapFirstFailedEcho, "returned error (logs) keeps the upstream text")
+	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), fullMapA)
+	require.NotContains(t, rec.Body.String(), "combo/")
+	require.NotContains(t, rec.Body.String(), "flash-lite")
+}
+
+func TestClientModelFullMappingErr_Messages_StreamFailureFirstEvent(t *testing.T) {
+	c, rec := newFullMapErrContext(t, "/v1/messages", true)
+	fullMapBindPassthroughRule(c, "overloaded")
+	resp := fullMapErrHTTPResponse(http.StatusOK, "text/event-stream", fullMapFailedFirstSSE)
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	_, err := svc.handleAnthropicStreamingResponse(resp, c, fullMapErrAccount(), fullMapA, fullMapA, fullMapC, time.Now())
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), fullMapFirstFailedEcho, "returned error (logs) keeps the upstream text")
+	require.Contains(t, rec.Body.String(), fullMapA)
+	require.NotContains(t, rec.Body.String(), "combo/")
+	require.NotContains(t, rec.Body.String(), "flash-lite")
+}
+
+func TestClientModelFullMappingErr_Messages_BufferedFailureFirstEvent(t *testing.T) {
+	c, rec := newFullMapErrContext(t, "/v1/messages", true)
+	fullMapBindPassthroughRule(c, "overloaded")
+	resp := fullMapErrHTTPResponse(http.StatusOK, "text/event-stream", fullMapFailedFirstSSE)
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	_, err := svc.handleAnthropicBufferedStreamingResponse(resp, c, fullMapErrAccount(), fullMapA, fullMapA, fullMapC, time.Now())
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), fullMapFirstFailedEcho, "returned error (logs) keeps the upstream text")
+	require.Contains(t, rec.Body.String(), fullMapA)
+	require.NotContains(t, rec.Body.String(), "combo/")
+	require.NotContains(t, rec.Body.String(), "flash-lite")
+}
+
 func TestClientModelFullMappingErr_NoView_Unchanged(t *testing.T) {
 	c, _ := newFullMapErrContext(t, "/v1/chat/completions", false)
 

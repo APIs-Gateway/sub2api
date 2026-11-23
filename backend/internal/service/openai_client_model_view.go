@@ -31,6 +31,9 @@ var clientModelViewSkipKeys = map[string]struct{}{
 	"output": {}, "outputtext": {}, "content": {}, "contentblock": {}, "delta": {}, "item": {},
 	"part": {}, "choices": {}, "instructions": {}, "tools": {}, "input": {}, "text": {},
 	"arguments": {}, "refusal": {}, "reasoning": {}, "summary": {}, "encryptedcontent": {},
+	// 代码、转写、日志概率、图片 base64、工具结果、引用与推理文本：都是模型正文或二进制，不碰。
+	"code": {}, "transcript": {}, "logprobs": {}, "partialimageb64": {}, "b64json": {}, "result": {},
+	"annotation": {}, "annotations": {}, "reasoningcontent": {}, "reasoningtext": {},
 }
 
 // clientModelVariant 是外来名的一个写法，已切成小写的字母段/数字段。
@@ -85,11 +88,21 @@ func (v clientModelView) withForeign(names ...string) clientModelView {
 	return clientModelView{client: v.client, names: merged, foreign: buildClientModelVariants(v.client, merged)}
 }
 
+// buildClientModelVariants 由外来名生成匹配变体：
+//   - 与 A 相等（不区分大小写）的外来名本身不产生任何变体（恒等映射 / 上游回显 A，没有要换的东西）；
+//   - 每个变体都要过 clientModelPlausibleName，拆出来的尾巴（`auto`、`default`、`latest`）不能变成全文匹配的普通词；
+//   - 变体与 A 相等时（只会来自本身带前缀的外来名，如 `cn:glm-5.3-flash`）标成 prefixOnly。
 func buildClientModelVariants(client string, names []string) []clientModelVariant {
 	seen := make(map[string]struct{})
 	var out []clientModelVariant
 	for _, name := range names {
+		if strings.EqualFold(strings.TrimSpace(name), client) {
+			continue
+		}
 		for _, text := range clientModelNameVariants(name) {
+			if !clientModelPlausibleName(text) {
+				continue
+			}
 			key := clientModelASCIILower(text)
 			if _, dup := seen[key]; dup {
 				continue
@@ -152,12 +165,22 @@ func clientModelNameVariants(name string) []string {
 }
 
 // clientModelSegments 把名字切成字母段（含非 ASCII 字节）和数字段，统一小写；其余字节当分隔符丢弃。
+// 两段之间恰好隔着一个 `/` 或 `:` 时，该字节作为后一段的首字节保留（如 `combo/auto` → `combo`、`/auto`），
+// 匹配时必须原样出现，这样带前缀的整名（`vendor/Foo`、`llama3:latest`）能整体命中，
+// 而不必靠「去前缀后的尾巴」（尾巴常常过不了「像模型名」门槛）。
 func clientModelSegments(name string) []string {
 	var segs []string
 	start, kind := -1, 0 // kind: 1 数字, 2 字母
+	prevEnd := 0         // 上一段的结束位置
+	var lit byte         // 当前段前面隔着的 `/` 或 `:`
 	flush := func(end int) {
 		if start >= 0 {
-			segs = append(segs, clientModelASCIILower(name[start:end]))
+			seg := clientModelASCIILower(name[start:end])
+			if lit != 0 {
+				seg = string(lit) + seg
+			}
+			segs = append(segs, seg)
+			prevEnd = end
 		}
 		start, kind = -1, 0
 	}
@@ -174,6 +197,10 @@ func clientModelSegments(name string) []string {
 			flush(i)
 			if k != 0 {
 				start, kind = i, k
+				lit = 0
+				if len(segs) > 0 && prevEnd == i-1 && (name[i-1] == '/' || name[i-1] == ':') {
+					lit = name[i-1]
+				}
 			}
 		}
 	}
@@ -227,12 +254,13 @@ func (v clientModelView) matchAt(s string, i, lo int) (start, end int, ok bool) 
 	return 0, 0, false
 }
 
-// clientModelMatchSegments 从 s[i] 起依次匹配各段（不区分大小写），段之间允许 0 或 1 个 `-._ `。
+// clientModelMatchSegments 从 s[i] 起依次匹配各段（不区分大小写），段之间允许 0 或 1 个 `-._ `（以 `/` `:` 开头的段除外，见 clientModelSegments）。
 // 返回匹配结束位置，失败 -1。分隔符不会与段首字节混淆，所以无需回溯。
 func clientModelMatchSegments(s string, i int, segs []string) int {
 	p := i
 	for k, seg := range segs {
-		if k > 0 && p < len(s) && clientModelIsSepByte(s[p]) {
+		// 以 `/` `:` 开头的段要求该字节原样出现，不走「0 或 1 个分隔符」的宽松规则。
+		if k > 0 && p < len(s) && seg[0] != '/' && seg[0] != ':' && clientModelIsSepByte(s[p]) {
 			p++
 		}
 		if len(s)-p < len(seg) {
@@ -267,13 +295,18 @@ func clientModelRightBoundary(s string, p int) bool {
 	return true
 }
 
-// clientModelSwallowPrefix 向左吞掉紧邻的前缀（可连续多段），不越过 lo：
-//   - `[A-Za-z0-9_.-]+/`：任意一段；
+// clientModelSwallowPrefix 向左吞掉紧邻的前缀，不越过 lo：
+//   - `[A-Za-z0-9_.-]+/`：只吞紧邻的一段（`a/b/c/名字` 只吞 `c/`）；URL（含 `://`）和绝对路径
+//     （词以 `/` 开头）里不吞，免得 `GET /v1/models/名字` 的路径被整段吃掉；
 //   - `<1–4 位 ASCII 字母>:`（如 `cn:`、`us:`）：前面那一段必须整段都是 1–4 个字母，
-//     所以 `model:` 这类普通词、`us-east:` 这类带连字符的都不吞。
+//     所以 `model:` 这类普通词、`us-east:` 这类带连字符的都不吞；可以与 `/` 前缀连用（`us:hub/名字`）。
 func clientModelSwallowPrefix(s string, i, lo int) int {
 	start := i
+	slashDone := false
 	for start-1 >= lo && (s[start-1] == '/' || s[start-1] == ':') {
+		if s[start-1] == '/' && (slashDone || clientModelInPathLikeToken(s, i)) {
+			break
+		}
 		r := start - 1
 		for r > lo && clientModelIsPrefixByte(s[r-1]) {
 			r--
@@ -284,9 +317,33 @@ func clientModelSwallowPrefix(s string, i, lo int) int {
 		if s[start-1] == ':' && !clientModelIsShortLetters(s[r:start-1]) {
 			break
 		}
+		if s[start-1] == '/' {
+			slashDone = true
+		}
 		start = r
 	}
 	return start
+}
+
+// clientModelInPathLikeToken：s[i] 所在的「词」（向左到空白、引号、括号、逗号分号为止）含 `://`，或以 `/` 开头。
+func clientModelInPathLikeToken(s string, i int) bool {
+	ts := i
+	for ts > 0 && !clientModelIsTokenBreakByte(s[ts-1]) {
+		ts--
+	}
+	tok := s[ts:i]
+	return strings.HasPrefix(tok, "/") || strings.Contains(tok, "://")
+}
+
+func clientModelIsTokenBreakByte(b byte) bool {
+	if clientModelIsSpaceByte(b) {
+		return true
+	}
+	switch b {
+	case '"', '\'', '`', '<', '>', '(', ')', '[', ']', '{', '}', ',', ';':
+		return true
+	}
+	return false
 }
 
 // clientModelIsShortLetters：1–4 个 ASCII 字母。
