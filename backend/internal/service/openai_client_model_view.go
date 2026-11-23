@@ -225,14 +225,14 @@ func (v clientModelView) scrubText(s string) string {
 			i++
 			continue
 		}
-		b.WriteString(s[last:start])
-		b.WriteString(v.client)
+		_, _ = b.WriteString(s[last:start])
+		_, _ = b.WriteString(v.client)
 		last, i = end, end
 	}
 	if last == 0 {
 		return s
 	}
-	b.WriteString(s[last:])
+	_, _ = b.WriteString(s[last:])
 	return b.String()
 }
 
@@ -352,7 +352,7 @@ func clientModelIsShortLetters(s string) bool {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
-		if c := s[i]; !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+		if c := s[i]; (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
 			return false
 		}
 	}
