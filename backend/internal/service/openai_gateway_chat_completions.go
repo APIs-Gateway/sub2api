@@ -534,13 +534,14 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 				errMsg = message
 			}
 			MarkResponseCommitted(c)
-			writeChatCompletionsError(c, status, errType, errMsg)
+			// client_model_full_mapping：写给客户端的文案换成用户请求的模型名；返回的 error 保留原文。
+			writeChatCompletionsError(c, status, errType, scrubClientVisibleModelText(c, errMsg))
 			return nil, fmt.Errorf("upstream response failed (passthrough): %s", errMsg)
 		}
 		if pub := chatPublicErrorForStreamFailure(payload, message); pub.HTTPStatus > 0 {
 			writeChatCompletionsPublicError(c, pub)
 		} else {
-			writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", message)
+			writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", scrubClientVisibleModelText(c, message))
 		}
 		return nil, fmt.Errorf("upstream response failed: %s", message)
 	}
@@ -850,6 +851,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			} else if pub := chatPublicErrorForStreamFailure(payloadBytes, message); pub.HTTPStatus > 0 {
 				defaultStatus, defaultErrType, defaultCode, defaultMsg = pub.HTTPStatus, pub.Type, pub.Code, pub.Message
 			}
+			// client_model_full_mapping：只改写写给客户端的 defaultMsg；logMsg（进返回的 error）不经 scrub，
+			// 保持上游原文（池可用性错误沿用 main 的固定文案，与本改动无关）。
+			defaultMsg = scrubClientVisibleModelText(c, defaultMsg)
 			errorObject := gin.H{
 				"type":    defaultErrType,
 				"message": defaultMsg,

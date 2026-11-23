@@ -4689,6 +4689,8 @@ func writeOpenAIPassthroughErrorEnvelope(c *gin.Context, downstreamStatus int, u
 	if c == nil {
 		return
 	}
+	// client_model_full_mapping：message 可能是上游 context-window 原文（固定文案不受影响）。
+	message = scrubClientVisibleModelText(c, message)
 	body, err := common.Marshal(gin.H{
 		"error": gin.H{
 			"type":    "upstream_error",
@@ -5705,7 +5707,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					c.JSON(status, gin.H{
 						"error": gin.H{
 							"type":    errType,
-							"message": errMsg,
+							"message": scrubClientVisibleModelText(c, errMsg),
 						},
 					})
 					return resultWithUsage(), fmt.Errorf("upstream error event: passthrough rule matched message=%s", errMsg)
@@ -5746,7 +5748,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						c.JSON(status, gin.H{
 							"error": gin.H{
 								"type":    errType,
-								"message": errMsg,
+								"message": scrubClientVisibleModelText(c, errMsg),
 							},
 						})
 						return resultWithUsage(), fmt.Errorf("upstream response failed: passthrough rule matched message=%s", errMsg)
@@ -6326,7 +6328,19 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		if contentType == "" {
 			contentType = "application/json"
 		}
-		c.Data(resp.StatusCode, contentType, body)
+		// client_model_full_mapping：原样透传的上游 body 里 model 字段与文案里的真实模型名换回用户请求的名字。
+		// 只在有 view 时改写，开关关闭时客户端字节与改动前一致；ops / MarkOpsCyberPolicy 已在上面记下上游原文。
+		clientBody := body
+		if _, ok := clientModelViewFrom(c); ok {
+			// 有 view 时 alignClientVisibleModelFor 只用 view，originalModel 参数不被使用；
+			// 这里没有更直接的原始请求名（requestBody 里已是映射后的上游名），所以只尽力取 requestedModel。
+			var reqModel string
+			if len(requestedModel) > 0 {
+				reqModel = strings.TrimSpace(requestedModel[0])
+			}
+			clientBody = alignClientVisibleModelFor(c, body, reqModel)
+		}
+		c.Data(resp.StatusCode, contentType, clientBody)
 		if cyberMsg == "" {
 			return nil, fmt.Errorf("openai cyber_policy: %d", resp.StatusCode)
 		}
@@ -6367,10 +6381,11 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		"Upstream request failed",
 	); matched {
 		MarkResponseCommitted(c)
+		// client_model_full_mapping：只改写给客户端的 message；errMsg 本身（进返回的 error）保留上游原文。
 		c.JSON(status, gin.H{
 			"error": gin.H{
 				"type":    errType,
-				"message": errMsg,
+				"message": scrubClientVisibleModelText(c, errMsg),
 			},
 		})
 		if upstreamMsg == "" {
@@ -6452,6 +6467,9 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
 		errMsg = upstreamMsg
 	}
+	// client_model_full_mapping：上游原文（context-window / passthrough）里的真实模型名换回用户请求的名字；
+	// upstreamMsg 本身不动（ops / 返回的 error 要保留原文）。
+	errMsg = scrubClientVisibleModelText(c, errMsg)
 
 	// Codex/Responses 端点：改写成 Codex 能用官方文案渲染的形态，上游原文只留在
 	// 上面已经写入的 ops 错误日志里。
@@ -6461,7 +6479,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		c.JSON(statusCode, gin.H{
 			"error": gin.H{
 				"type":    errType,
-				"message": errMsg,
+				"message": scrubClientVisibleModelText(c, errMsg),
 			},
 		})
 	}
@@ -6523,7 +6541,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponseWithOptions(
 			clientMsg = "Request blocked by upstream cyber-security policy"
 		}
 		if !writeCompatPublicUpstreamError(c, publicWriter, resp.StatusCode, body) {
-			writeError(c, resp.StatusCode, "invalid_request_error", clientMsg)
+			writeError(c, resp.StatusCode, "invalid_request_error", scrubClientVisibleModelText(c, clientMsg))
 		}
 		if cyberMsg == "" {
 			return nil, fmt.Errorf("openai cyber_policy: %d", resp.StatusCode)
@@ -6553,7 +6571,8 @@ func (s *OpenAIGatewayService) handleCompatErrorResponseWithOptions(
 		http.StatusBadGateway, "api_error", "Upstream request failed",
 	); matched {
 		MarkResponseCommitted(c)
-		writeError(c, status, errType, errMsg)
+		// client_model_full_mapping：只改写给客户端的 message；errMsg 本身（进返回的 error）保留上游原文。
+		writeError(c, status, errType, scrubClientVisibleModelText(c, errMsg))
 		if upstreamMsg == "" {
 			upstreamMsg = errMsg
 		}
@@ -6630,7 +6649,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponseWithOptions(
 	}
 
 	if !writeCompatPublicUpstreamError(c, publicWriter, resp.StatusCode, body) {
-		writeError(c, resp.StatusCode, errType, upstreamMsg)
+		writeError(c, resp.StatusCode, errType, scrubClientVisibleModelText(c, upstreamMsg))
 	}
 	return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 }
@@ -7137,7 +7156,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					c.JSON(status, gin.H{
 						"error": gin.H{
 							"type":    errType,
-							"message": errMsg,
+							"message": scrubClientVisibleModelText(c, errMsg),
 						},
 					})
 					streamEarlyErr = fmt.Errorf("upstream error event: passthrough rule matched message=%s", errMsg)
@@ -7183,7 +7202,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 						c.JSON(status, gin.H{
 							"error": gin.H{
 								"type":    errType,
-								"message": errMsg,
+								"message": scrubClientVisibleModelText(c, errMsg),
 							},
 						})
 						streamEarlyErr = fmt.Errorf("upstream response failed: passthrough rule matched message=%s", errMsg)
@@ -8267,8 +8286,10 @@ func (s *OpenAIGatewayService) writeOpenAINonStreamingProtocolError(resp *http.R
 		message = "Upstream returned an invalid non-streaming response"
 	}
 	setOpsUpstreamError(c, http.StatusBadGateway, message, "")
+	// client_model_full_mapping：写给客户端的文案换成用户请求的模型名；ops 与返回的 error 保留上游原文。
+	clientMessage := scrubClientVisibleModelText(c, message)
 	if openAICompactClientWantsStream(c) && StopOpenAICompactSSEKeepaliveCommitted(c) {
-		writeOpenAICompactSSEFailureMessage(c, http.StatusBadGateway, "upstream_error", message)
+		writeOpenAICompactSSEFailureMessage(c, http.StatusBadGateway, "upstream_error", clientMessage)
 		return fmt.Errorf("non-streaming openai protocol error: %s", message)
 	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -8276,7 +8297,7 @@ func (s *OpenAIGatewayService) writeOpenAINonStreamingProtocolError(resp *http.R
 	c.JSON(http.StatusBadGateway, gin.H{
 		"error": gin.H{
 			"type":    "upstream_error",
-			"message": message,
+			"message": clientMessage,
 		},
 	})
 	return fmt.Errorf("non-streaming openai protocol error: %s", message)
