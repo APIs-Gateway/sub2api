@@ -97,6 +97,11 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	// derive a stable seed from the final upstream model family.
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	if s.clientModelFullMappingEnabled() {
+		if v, ok := newClientModelView(originalModel, upstreamModel); ok {
+			setClientModelView(c, v)
+		}
+	}
 	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err
@@ -221,6 +226,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
+			noteClientModelViewForeign(c, upstreamModel)
 		}
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
@@ -501,6 +507,8 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	}
 	if strings.TrimSpace(finalResponse.Status) == "failed" {
 		payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": finalResponse})
+		// 失败分支早于下面的模型比对：先把上游回显的 model 记进外来名，写给客户端的文案才能换成 A。
+		noteClientModelViewForeign(c, strings.TrimSpace(finalResponse.Model))
 		// cyber_policy 致命不可重试：不 failover，以 Chat Completions 错误格式回写（F4），
 		// 标记供 handler 事后写风控/邮件/tokens=0 用量行。
 		if hit, code, msg := detectOpenAICyberPolicy(payload); hit {
@@ -528,13 +536,14 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 				errMsg = message
 			}
 			MarkResponseCommitted(c)
-			writeChatCompletionsError(c, status, errType, errMsg)
+			// client_model_full_mapping：写给客户端的文案换成用户请求的模型名；返回的 error 保留原文。
+			writeChatCompletionsError(c, status, errType, scrubClientVisibleModelText(c, errMsg))
 			return nil, fmt.Errorf("upstream response failed (passthrough): %s", errMsg)
 		}
 		if pub := chatPublicErrorForStreamFailure(payload, message); pub.HTTPStatus > 0 {
 			writeChatCompletionsPublicError(c, pub)
 		} else {
-			writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", message)
+			writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", scrubClientVisibleModelText(c, message))
 		}
 		return nil, fmt.Errorf("upstream response failed: %s", message)
 	}
@@ -776,6 +785,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			beforeError := semanticOutputBeforePayload
 			outputBeforeError = &beforeError
 			payloadBytes := []byte(payload)
+			// 失败分支早于下面的模型比对：先把上游回显的 model 记进外来名，写给客户端的文案才能换成 A。
+			noteClientModelViewForeign(c, extractUpstreamResponseModel(payloadBytes))
 			message := extractOpenAISSEErrorMessage(payloadBytes)
 			if hit, code, msg := detectOpenAICyberPolicy(payloadBytes); hit {
 				// cyber_policy 致命且不可重试：不 failover。下发标准 error chunk +
@@ -844,6 +855,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			} else if pub := chatPublicErrorForStreamFailure(payloadBytes, message); pub.HTTPStatus > 0 {
 				defaultStatus, defaultErrType, defaultCode, defaultMsg = pub.HTTPStatus, pub.Type, pub.Code, pub.Message
 			}
+			// client_model_full_mapping：只改写写给客户端的 defaultMsg；logMsg（进返回的 error）不经 scrub，
+			// 保持上游原文（池可用性错误沿用 main 的固定文案，与本改动无关）。
+			defaultMsg = scrubClientVisibleModelText(c, defaultMsg)
 			errorObject := gin.H{
 				"type":    defaultErrType,
 				"message": defaultMsg,

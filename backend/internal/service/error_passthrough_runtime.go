@@ -147,7 +147,7 @@ func resolveUpstreamErrorResponse(c *gin.Context, platform string, upstreamStatu
 			if !rule.PassthroughCode && rule.ResponseCode != nil {
 				respCode = *rule.ResponseCode
 			}
-			msg := sanitizeClientVisibleUpstreamMessage(upstreamMsg)
+			msg := scrubClientVisibleModelText(c, sanitizeClientVisibleUpstreamMessage(upstreamMsg))
 			if redactClientMessage {
 				_, _, msg, _ = MapUpstreamErrorDefault(upstreamStatus)
 			}
@@ -165,7 +165,8 @@ func resolveUpstreamErrorResponse(c *gin.Context, platform string, upstreamStatu
 	status, errType, message, passthrough := MapUpstreamErrorDefault(upstreamStatus)
 	if !redactClientMessage && (passthrough || isOpenAIExhaustedModelNotFound400(platform, upstreamStatus, responseBody)) {
 		fallback := message
-		message = sanitizeClientVisibleUpstreamMessage(upstreamMsg)
+		// client_model_full_mapping：上游文案里的真实模型名换回用户请求的名字（无 view 时原样）。
+		message = scrubClientVisibleModelText(c, sanitizeClientVisibleUpstreamMessage(upstreamMsg))
 		if strings.TrimSpace(message) == "" {
 			message = fallback
 			if strings.TrimSpace(message) == "" {

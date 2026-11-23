@@ -893,6 +893,10 @@ type GatewayConfig struct {
 	// UpstreamModelMismatchObserveAccountIDs：账号级观察名单。名单内账号的上游模型不一致只记录不拦截（同全局观察模式），
 	// 其余账号照常拦截。用于 openai_forced_account_routes 这类强制单账号路由：拦截后无号可切，客户端会直接收到 502。
 	UpstreamModelMismatchObserveAccountIDs []int64 `mapstructure:"upstream_model_mismatch_observe_account_ids"`
+	// ClientModelFullMapping 为 true 时，OpenAI 兼容网关返回给用户的内容里只出现用户请求的模型名：
+	// 任意深度的 model 类字段与错误/状态文案里的上游模型名（映射后的名字及上游回显的各种写法）统一换成用户请求的名字。
+	// 只改发给客户端的字节；模型正文、推理、工具参数、审计数据（upstream_response_model、ops 标记）不受影响。默认关闭。
+	ClientModelFullMapping bool `mapstructure:"client_model_full_mapping"`
 	// NoAutoUnschedAccountIDs：名单内账号「不自动暂停调度」——因上游失败自动产生的任何停调度/冷却
 	// （429、529、401/403 置错、临时不可调度规则、流超时、单模型限流、运行时冷却、传输错误隔离、
 	// 代理流隔离）都不影响它被选中；管理员手动停用、过期、配额耗尽等仍然生效。
@@ -2210,6 +2214,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.disable_openai_responses_image_generation", false)
 	viper.SetDefault("gateway.disable_upstream_model_mismatch_block", false)
 	viper.SetDefault("gateway.upstream_model_mismatch_observe_account_ids", []int64{})
+	viper.SetDefault("gateway.client_model_full_mapping", false)
 	viper.SetDefault("gateway.no_auto_unsched_account_ids", []int64{})
 	viper.SetDefault("gateway.model_downgrade_guard.enabled", false)
 	viper.SetDefault("gateway.model_downgrade_guard.threshold_count", 5)

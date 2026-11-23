@@ -204,6 +204,9 @@ gateway:
   # Account IDs that only record (never block) upstream model mismatch; other accounts keep blocking (default: empty). Meant for forced single-account routes (openai_forced_account_routes) where a block cannot fail over and turns into a client-facing 502
   # 账号级观察名单：名单内账号的上游模型不一致只记录不拦截，其余账号照常拦截（默认空）。用于强制单账号路由（openai_forced_account_routes）的专线账号——拦截后无号可切，客户端会直接收到 502。同样仅配置/环境变量可改、不热加载
   upstream_model_mismatch_observe_account_ids: []
+  # When true, everything returned to the user shows only the model name the user requested (model fields at any depth and upstream model names inside error/status text are rewritten; output text and audit data are untouched). Default: false
+  # 为 true 时，返回给用户的内容里只出现用户请求的模型名：任意深度的 model 类字段、错误/状态文案里的上游模型名统一换成用户请求的名字（输出正文和审计数据不改）。默认 false，仅 free 站这类需要隐藏上游模型的站点开启
+  client_model_full_mapping: false
   # Optional cross-request quarantine after repeated, pre-delivery model
   # substitutions. Only explicitly listed sent/response model pairs count.
   # Keep disabled until the affected pool and pairs are confirmed in usage logs.

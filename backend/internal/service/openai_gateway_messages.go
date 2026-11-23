@@ -69,6 +69,11 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// 2. Model mapping
 	billingModel := resolveOpenAIForwardModel(account, normalizedModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	if s.clientModelFullMappingEnabled() {
+		if v, ok := newClientModelView(originalModel, upstreamModel); ok {
+			setClientModelView(c, v)
+		}
+	}
 	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
 		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err
@@ -210,6 +215,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
+			noteClientModelViewForeign(c, upstreamModel)
 		}
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
@@ -532,6 +538,8 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 
 	if strings.TrimSpace(finalResponse.Status) == "failed" {
 		payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": finalResponse})
+		// 失败分支早于下面的模型比对：先把上游回显的 model 记进外来名，写给客户端的文案才能换成 A。
+		noteClientModelViewForeign(c, strings.TrimSpace(finalResponse.Model))
 		if hit, code, msg := detectOpenAICyberPolicy(payload); hit {
 			MarkOpsCyberPolicy(c, CyberPolicyMark{
 				Code:                     code,
@@ -547,7 +555,8 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 			if clientMsg == "" {
 				clientMsg = "Request blocked by upstream cyber-security policy"
 			}
-			writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", clientMsg)
+			// client_model_full_mapping：写给客户端的文案换成用户请求的模型名；返回的 error 保留原文。
+			writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", scrubClientVisibleModelText(c, clientMsg))
 			return nil, fmt.Errorf("openai cyber_policy: %s", msg)
 		}
 		message := openAICompatFailedResponseMessage(finalResponse)
@@ -562,7 +571,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 				errMsg = openAIMessagesUpstreamFailedClientMessage
 			}
 			MarkResponseCommitted(c)
-			writeAnthropicError(c, status, errType, errMsg)
+			writeAnthropicError(c, status, errType, scrubClientVisibleModelText(c, errMsg))
 			return nil, fmt.Errorf("upstream response failed (passthrough): %s", errMsg)
 		}
 		writeAnthropicError(c, http.StatusBadGateway, "api_error", openAIMessagesUpstreamFailedClientMessage)
@@ -982,6 +991,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			// 回写让客户端感知并停止重试（F4），丢弃后续转换输出。
 			if eventType == "response.failed" || isBareErrorEvent {
 				payloadBytes := []byte(payload)
+				// 失败分支早于下面的模型比对：先把上游回显的 model 记进外来名，写给客户端的文案才能换成 A。
+				noteClientModelViewForeign(c, extractUpstreamResponseModel(payloadBytes))
 				if hit, code, msg := detectOpenAICyberPolicy(payloadBytes); hit {
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
 						Code:                     code,
@@ -999,7 +1010,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 						if clientMsg == "" {
 							clientMsg = "Request blocked by upstream cyber-security policy"
 						}
-						if _, err := fmt.Fprint(c.Writer, buildAnthropicStreamErrorSSE("invalid_request_error", clientMsg)); err == nil {
+						if _, err := fmt.Fprint(c.Writer, buildAnthropicStreamErrorSSE("invalid_request_error", scrubClientVisibleModelText(c, clientMsg))); err == nil {
 							c.Writer.Flush()
 						}
 						clientDisconnected = true
@@ -1027,6 +1038,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 					errStatus, errType, errMsg = status, et, em
 					MarkResponseCommitted(c)
 				}
+				// client_model_full_mapping：只改写写给客户端的 errMsg；logMsg（进返回的 error）取自上游原文，不经 scrub。
+				errMsg = scrubClientVisibleModelText(c, errMsg)
 				if !clientDisconnected {
 					// 心跳 ping 不置 clientOutputStarted，但已提交 200 SSE 响应头（headersWritten），
 					// 此时只能以流内 error 事件收尾，不能再写 JSON 错误体。
