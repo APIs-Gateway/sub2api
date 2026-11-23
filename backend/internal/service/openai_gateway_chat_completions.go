@@ -97,6 +97,11 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	// derive a stable seed from the final upstream model family.
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	if s.clientModelFullMappingEnabled() {
+		if v, ok := newClientModelView(originalModel, upstreamModel); ok {
+			setClientModelView(c, v)
+		}
+	}
 	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err
@@ -221,6 +226,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
+			noteClientModelViewForeign(c, upstreamModel)
 		}
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey

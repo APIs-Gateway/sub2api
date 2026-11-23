@@ -299,6 +299,9 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	if upstreamModelMatches(sentModel, responseModel) {
 		return nil
 	}
+	// 上游回显了与发送不同的名字：记进 client_model_view，之后对客户端字节的文本级改写要把它换成 A。
+	// 比对用的是调用方读到的上游原始值，这里只追加外来名，不改变比对、打标与拦截逻辑。
+	noteClientModelViewForeign(c, responseModel)
 	if upstreamModelObserveOnly(sentModel) {
 		canBlock = false
 	}

@@ -3832,6 +3832,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		setOpenAIResponsesClientToolMapping(c, mapping)
 	}
 
+	// free 站「只出现用户请求的模型名」：发给上游的请求之前建好 view，响应处理按它改写客户端字节。
+	if s.clientModelFullMappingEnabled() {
+		if v, ok := newClientModelView(originalModel, upstreamModel); ok {
+			setClientModelView(c, v)
+		}
+	}
+
 	httpInvalidEncryptedContentRetryTried := false
 	rejectedFieldRetryState := newOpenAIResponsesRejectedFieldRetryState(body)
 	agentTaskRecoveryTried := false
@@ -6645,6 +6652,11 @@ type openaiNonStreamingResult struct {
 	imageOutputSizes []string
 }
 
+// clientModelFullMappingEnabled：free 站「只出现用户请求的模型名」开关（gateway.client_model_full_mapping）。
+func (s *OpenAIGatewayService) clientModelFullMappingEnabled() bool {
+	return s != nil && s.cfg != nil && s.cfg.Gateway.ClientModelFullMapping
+}
+
 func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
 	return s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, mappedModel, "")
 }
@@ -7233,7 +7245,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 			// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
 			//（上游真实值已在上面的比对里进了审计；助手内部有 "model" 子串快速路径）。
-			line = alignClientVisibleModelInSSELine(line, originalModel)
+			line = alignClientVisibleModelInSSELineFor(c, line, originalModel)
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
 			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
 			// commitsOutput 决定暂存内容是否 flush 给客户端；非池账号恒等于 startsClientOutput。
@@ -7953,7 +7965,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	}
 
 	// 客户端可见 model 对齐（审计已在上面的比对里取走真实值）。
-	body = alignClientVisibleModel(body, originalModel)
+	body = alignClientVisibleModelFor(c, body, originalModel)
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	// Codex 协议要求 /responses/compact JSON 响应携带 x-codex-turn-state，显式回传。
@@ -8012,7 +8024,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		}
 		finalResponse = supplementCompactionItemFromSSE(c, finalResponse, bodyText)
 		// 客户端可见 model 对齐（审计已在上面的比对里取走真实值）。
-		body = alignClientVisibleModel(finalResponse, originalModel)
+		body = alignClientVisibleModelFor(c, finalResponse, originalModel)
 		// Correct tool calls in final response
 		body = s.correctToolCallsInResponseBody(body)
 		var restoreClientToolErr error
@@ -8046,7 +8058,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 				return nil, ferr
 			}
 		}
-		body = []byte(alignClientVisibleModelInSSEBody(bodyText, originalModel))
+		body = []byte(alignClientVisibleModelInSSEBodyFor(c, bodyText, originalModel))
 		// The default HTTP path wraps declared SSE before reading it. A native
 		// upstream can also omit or mislabel Content-Type while returning an
 		// incomplete SSE response to a non-streaming request. Restore those

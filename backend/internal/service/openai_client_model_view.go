@@ -596,12 +596,28 @@ func clientModelViewFrom(c *gin.Context) (clientModelView, bool) {
 }
 
 // noteClientModelViewForeign 把上游回显的名字追加进当前请求的 view；没有 view 时 no-op。
+// 只收「像模型名」的值（长度 >= 4，且含数字、`-`、`/` 之一，照 recorder 的 plausible_model_name），
+// 免得上游回显 `auto` 这类普通词时，把正文里的同名词也换成 A。
 func noteClientModelViewForeign(c *gin.Context, names ...string) {
 	v, ok := clientModelViewFrom(c)
 	if !ok {
 		return
 	}
-	setClientModelView(c, v.withForeign(names...))
+	kept := make([]string, 0, len(names))
+	for _, n := range names {
+		if clientModelPlausibleName(n) {
+			kept = append(kept, n)
+		}
+	}
+	if len(kept) == 0 {
+		return
+	}
+	setClientModelView(c, v.withForeign(kept...))
+}
+
+func clientModelPlausibleName(name string) bool {
+	name = strings.TrimSpace(name)
+	return len(name) >= 4 && strings.ContainsAny(name, "0123456789-/")
 }
 
 // scrubClientVisibleModelText：c 为 nil 或无 view → 原样。

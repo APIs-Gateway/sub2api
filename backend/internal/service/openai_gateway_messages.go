@@ -69,6 +69,11 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// 2. Model mapping
 	billingModel := resolveOpenAIForwardModel(account, normalizedModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	if s.clientModelFullMappingEnabled() {
+		if v, ok := newClientModelView(originalModel, upstreamModel); ok {
+			setClientModelView(c, v)
+		}
+	}
 	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
 		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err
@@ -210,6 +215,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
+			noteClientModelViewForeign(c, upstreamModel)
 		}
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey

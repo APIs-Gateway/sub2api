@@ -170,3 +170,22 @@ func TestClientModelViewContextSSEFallback(t *testing.T) {
 	require.Equal(t, `data: {"model":"deepseek-v4-pro","msg":"deepseek-v4-pro"}`, alignClientVisibleModelInSSELineFor(c, line, "ignored"))
 	require.Equal(t, `data: {"model":"deepseek-v4-pro","msg":"deepseek-v4-pro"}`+"\n", alignClientVisibleModelInSSEBodyFor(c, line+"\n", "ignored"))
 }
+
+// noteClientModelViewForeign 只收「像模型名」的值：长度 >= 4，且含数字、`-`、`/` 之一。
+// 上游回显的 `auto`、`ok` 这类普通词不能被当成外来名，否则会把正文里的同名词误换成 A。
+func TestClientModelViewNoteForeignPlausibleOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	v, _ := newClientModelView("deepseek-v4-pro")
+	setClientModelView(c, v)
+
+	for _, junk := range []string{"auto", "ok", "", "  ", "default", "gpt"} {
+		noteClientModelViewForeign(c, junk)
+	}
+	require.Equal(t, "auto mode default gpt ok", scrubClientVisibleModelText(c, "auto mode default gpt ok"))
+
+	noteClientModelViewForeign(c, "auto", "o3-x", "vendor/Foo")
+	require.Equal(t, "deepseek-v4-pro and deepseek-v4-pro, auto", scrubClientVisibleModelText(c, "o3-x and vendor/Foo, auto"))
+	noteClientModelViewForeign(c, "glm5")
+	require.Equal(t, "deepseek-v4-pro", scrubClientVisibleModelText(c, "glm5"))
+}
