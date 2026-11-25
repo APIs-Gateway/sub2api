@@ -60,6 +60,8 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
 	c.Set(openAIStructuredInputRawFallbackKey, false)
+	// 解密失败兜底重试要用调用方给的原值重入本函数，下面会改写 promptCacheKey。
+	callerPromptCacheKey := promptCacheKey
 	s.prepareCodexAccountIdentitySource(c, account)
 	if err := rejectAmbiguousGatewayModel(c, body); err != nil {
 		return nil, err
@@ -92,6 +94,16 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 	originalModel := chatReq.Model
 	clientStream := chatReq.Stream
+	// gateway.chat_completions_reasoning_details 开启时：接受 OpenRouter 风格的 reasoning 对象，
+	// 并把请求带回的 reasoning / reasoning_details 文本折进 reasoning_content（<thinking> 方式）。
+	var clientReasoning chatClientReasoningOptions
+	if s.chatCompletionsReasoningDetailsEnabled() {
+		clientReasoning = parseChatClientReasoningOptions(body)
+		if chatReq.ReasoningEffort == "" && !clientReasoning.Disabled {
+			chatReq.ReasoningEffort = clientReasoning.Effort
+		}
+		apicompat.NormalizeChatReasoningInput(&chatReq)
+	}
 
 	// 2. Resolve model mapping early so compat prompt_cache_key injection can
 	// derive a stable seed from the final upstream model family.
@@ -269,6 +281,16 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		responsesReq.Reasoning.Effort = account.GetOpenAIForcedReasoningEffort()
 	}
 
+	// gateway.chat_completions_reasoning_details 开启时补 reasoning.summary=auto：不带摘要请求时上游只回
+	// 加密推理、不回摘要，chat 响应的 reasoning_content 会一直为空。放在强制档位之后，
+	// 这样最终 body 里同时有提升后的 effort 和 summary。
+	if !isResponsesShape && s.chatCompletionsReasoningDetailsEnabled() {
+		responsesBody, err = ensureChatResponsesReasoningSummary(responsesBody, upstreamModel, clientReasoning)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// 4b. Apply OpenAI fast policy (may filter service_tier or block the request).
 	// GPT-6 Sol/Luna reject sampling/logprobs parameters unless reasoning is
 	// disabled; the Responses-shaped (Cursor) branch forwards raw bodies.
@@ -341,6 +363,22 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		respBody, proofReadErr := s.readUpstreamErrorBodyComplete(resp)
 		_ = resp.Body.Close()
 		resp.Body = &billingInflightProviderErrorBody{Reader: bytes.NewReader(respBody), readErr: proofReadErr}
+
+		// 客户端带回的 reasoning_details 被还原成 reasoning 加密项后，上游若判定密文不可解
+		// （invalid_encrypted_content），整包会被拒。这不是账号故障：在账号 failover 与错误处理之前，
+		// 剥掉请求里的 reasoning_details，退回 <thinking> 文本方式只重试一次。
+		if !isResponsesShape && resp.StatusCode == http.StatusBadRequest &&
+			isOpenAIInvalidEncryptedContentResponse(respBody) {
+			if retryBody, stripped := stripChatReasoningDetails(body); stripped > 0 {
+				// signature 丢失：上游解不开的密文留着也没用，剥掉后退回文本方式；这里留一条 warn 供统计。
+				logger.L().Warn("openai chat_completions: invalid_encrypted_content, stripped encrypted reasoning and retrying",
+					zap.Int64("account_id", account.ID),
+					zap.Int("stripped_encrypted_items", stripped),
+					zap.Int("upstream_status", resp.StatusCode))
+				cancelUpstream()
+				return s.ForwardAsChatCompletions(ctx, c, account, retryBody, callerPromptCacheKey, defaultMappedModel)
+			}
+		}
 
 		if canRecoverConvertedResponsesInput(ctx, c, account, isResponsesShape, responsesBody) &&
 			isConvertedResponsesInputStringRejection(resp.StatusCode, respBody, proofReadErr) {
@@ -440,6 +478,123 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 
 	return result, handleErr
+}
+
+// chatCompletionsReasoningDetailsEnabled 报告 gateway.chat_completions_reasoning_details 是否开启。
+func (s *OpenAIGatewayService) chatCompletionsReasoningDetailsEnabled() bool {
+	return s != nil && s.cfg != nil && s.cfg.Gateway.ChatCompletionsReasoningDetails
+}
+
+// chatClientReasoningOptions 是 chat 请求里 OpenRouter 风格 reasoning 对象的可用部分：
+// {"reasoning":{"effort":"high","summary":"detailed","enabled":false}}。
+// max_tokens、exclude 等其他子字段忽略，不往上游传。
+type chatClientReasoningOptions struct {
+	Effort   string
+	Summary  string // 只保留 auto / concise / detailed
+	Disabled bool   // enabled=false
+}
+
+func parseChatClientReasoningOptions(body []byte) chatClientReasoningOptions {
+	obj := gjson.GetBytes(body, "reasoning")
+	if !obj.IsObject() {
+		return chatClientReasoningOptions{}
+	}
+	opts := chatClientReasoningOptions{
+		Effort:   strings.ToLower(strings.TrimSpace(obj.Get("effort").String())),
+		Disabled: obj.Get("enabled").Type == gjson.False,
+	}
+	switch summary := strings.ToLower(strings.TrimSpace(obj.Get("summary").String())); summary {
+	case "auto", "concise", "detailed":
+		opts.Summary = summary
+	}
+	return opts
+}
+
+// ensureChatResponsesReasoningSummary 给 chat 转出的 Responses 请求体补 reasoning.summary（与已有 effort 合并，不覆盖）。
+// 条件：已有 reasoning 对象或上游模型是推理模型；effort 不是 none；客户端没有 reasoning.enabled=false。
+// 客户端给了合法 summary 就用它，否则只在 body 里没有 summary 时补 "auto"。其余情况原样返回同一份 body。
+func ensureChatResponsesReasoningSummary(body []byte, upstreamModel string, client chatClientReasoningOptions) ([]byte, error) {
+	if client.Disabled {
+		return body, nil
+	}
+	reasoning := gjson.GetBytes(body, "reasoning")
+	if !reasoning.IsObject() && !apicompat.IsReasoningModel(upstreamModel) {
+		return body, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(reasoning.Get("effort").String()), "none") {
+		return body, nil
+	}
+	summary := client.Summary
+	if summary == "" {
+		if strings.TrimSpace(reasoning.Get("summary").String()) != "" {
+			return body, nil
+		}
+		summary = "auto"
+	}
+	out, err := sjson.SetBytes(body, "reasoning.summary", summary)
+	if err != nil {
+		return body, fmt.Errorf("set reasoning.summary: %w", err)
+	}
+	return out, nil
+}
+
+// isOpenAIInvalidEncryptedContentResponse 识别上游因密文不可解而拒绝请求的 400 响应；
+// 判定口径与 Forward 的同类重试一致（invalid_encrypted_content，或 thinking_signature_invalid 的「无法验证/解密」文案）。
+func isOpenAIInvalidEncryptedContentResponse(respBody []byte) bool {
+	code := extractUpstreamErrorCode(respBody)
+	if code == "invalid_encrypted_content" {
+		return true
+	}
+	msg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+	return code == "thinking_signature_invalid" &&
+		strings.Contains(msg, "The encrypted content") &&
+		strings.Contains(msg, "could not be verified") &&
+		strings.Contains(msg, "could not be decrypted or parsed")
+}
+
+// stripChatReasoningDetails 删掉 chat 请求体里 messages[].reasoning_details 中 type=="reasoning.encrypted" 的元素，
+// 返回新 body 与被删掉的密文元素个数。reasoning.summary / reasoning.text 元素保留（重入后由 NormalizeChatReasoningInput
+// 生成 <thinking>）；删完数组为空时连键一起删。其他字节原样保留，所以被还原成 reasoning 项的
+// reasoning_content 会回到 <thinking> 文本方式。
+func stripChatReasoningDetails(body []byte) ([]byte, int) {
+	messages := gjson.GetBytes(body, "messages")
+	if !messages.IsArray() {
+		return body, 0
+	}
+	out := body
+	count := 0
+	for i, msg := range messages.Array() {
+		details := msg.Get("reasoning_details")
+		if !details.IsArray() {
+			continue
+		}
+		var kept []string
+		dropped := 0
+		for _, el := range details.Array() {
+			if el.Get("type").String() == apicompat.ChatReasoningDetailTypeEncrypted {
+				dropped++
+				continue
+			}
+			kept = append(kept, el.Raw)
+		}
+		if dropped == 0 {
+			continue
+		}
+		path := fmt.Sprintf("messages.%d.reasoning_details", i)
+		var next []byte
+		var err error
+		if len(kept) == 0 {
+			next, err = sjson.DeleteBytes(out, path)
+		} else {
+			next, err = sjson.SetRawBytes(out, path, []byte("["+strings.Join(kept, ",")+"]"))
+		}
+		if err != nil {
+			return body, 0
+		}
+		out = next
+		count += dropped
+	}
+	return out, count
 }
 
 func normalizeResponsesRequestServiceTier(req *apicompat.ResponsesRequest) {
@@ -578,8 +733,18 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	// When the terminal event has an empty output array, reconstruct from
 	// accumulated delta events so the client receives the full content.
 	acc.SupplementResponseOutput(finalResponse)
+	if s.chatCompletionsReasoningDetailsEnabled() {
+		acc.SeparateReasoningSummary(finalResponse)
+	}
 
-	chatResp := apicompat.ResponsesToChatCompletions(finalResponse, originalModel)
+	var chatOpts apicompat.ResponsesToChatCompletionsOptions
+	if s.chatCompletionsReasoningDetailsEnabled() {
+		chatOpts = apicompat.ResponsesToChatCompletionsOptions{
+			ReasoningDetails:  true,
+			FallbackReasoning: acc.DoneReasoningItems(),
+		}
+	}
+	chatResp := apicompat.ResponsesToChatCompletionsWithOptions(finalResponse, originalModel, chatOpts)
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -677,6 +842,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 
 	state := apicompat.NewResponsesEventToChatState()
 	state.Model = originalModel
+	state.ReasoningDetails = s.chatCompletionsReasoningDetailsEnabled()
 	// 网关作为计费链路的一环，不能把下游 usage 输出绑定到客户端是否显式请求。
 	// raw Chat Completions 直转路径已经强制透出 usage，这里保持同样行为，避免级联代理计费为 0。
 	state.IncludeUsage = true

@@ -3540,6 +3540,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			bodyModified = false
 		}
 	}
+	// gateway.responses_force_encrypted_reasoning：推理模型的请求补 include=["reasoning.encrypted_content"]，
+	// 让上游回加密推理（signature）。放在强制档位之后，按提升后的 effort 判断；范围与强制档位相同。
+	if s.responsesForceEncryptedReasoningEnabled() && wsDecision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 && !isCompactRequest && !isOpenAIImageGenerationModel(upstreamModel) {
+		encBody, added, encErr := ensureResponsesEncryptedReasoningInclude(body, upstreamModel)
+		if encErr != nil {
+			return nil, encErr
+		}
+		if added {
+			body = encBody
+			requestView = newOpenAIRequestView(body)
+			reqBody = nil
+			bodyModified = false
+		}
+	}
 	imageBillingModel := ""
 	imageSizeTier := ""
 	imageInputSize := ""
