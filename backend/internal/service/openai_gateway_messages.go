@@ -255,6 +255,19 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 	}
 
+	// 账号级强制思考档位（extra.openai_force_reasoning_effort）：作用在最终发给上游的
+	// Responses 体上；GPT-6 采样参数在转换阶段已按模型清掉，强制后仍补跑一次清理以防万一。
+	if forcedBody, forced, forceErr := applyOpenAIForcedReasoningEffortForUpstream(account, responsesBody, upstreamModel); forceErr != nil {
+		return nil, forceErr
+	} else if forced {
+		responsesBody = forcedBody
+		// 用量日志记录实际发给上游的档位。
+		if responsesReq.Reasoning == nil {
+			responsesReq.Reasoning = &apicompat.ResponsesReasoning{}
+		}
+		responsesReq.Reasoning.Effort = account.GetOpenAIForcedReasoningEffort()
+	}
+
 	// 4c. Apply OpenAI fast policy (may filter service_tier or block the request).
 	// Mirrors the Claude anthropic-beta "fast-mode-2026-02-01" filter, but keyed
 	// on the body-level service_tier field (priority/flex).

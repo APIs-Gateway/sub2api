@@ -3525,6 +3525,21 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 		}
 	}
+	// 账号级强制思考档位（extra.openai_force_reasoning_effort）：请求体在这里定型，
+	// 下面的首包超时、上游请求和用量日志都读这份 body，所以记录的是实际发给上游的档位。
+	// 只作用于 HTTP 上游；WS 上游、compact 和图片模型不在范围内（带 image_generation 工具的文本请求照常强制）。
+	if wsDecision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 && !isCompactRequest && !isOpenAIImageGenerationModel(upstreamModel) {
+		forcedBody, forced, forceErr := applyOpenAIForcedReasoningEffortForUpstream(account, body, upstreamModel)
+		if forceErr != nil {
+			return nil, forceErr
+		}
+		if forced {
+			body = forcedBody
+			requestView = newOpenAIRequestView(body)
+			reqBody = nil
+			bodyModified = false
+		}
+	}
 	imageBillingModel := ""
 	imageSizeTier := ""
 	imageInputSize := ""
