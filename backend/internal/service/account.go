@@ -911,6 +911,20 @@ func (a *Account) GetExtraString(key string) string {
 	return ""
 }
 
+// GetOpenAIForcedReasoningEffort 返回账号级强制思考档位 extra.openai_force_reasoning_effort。
+// 只接受 low / medium / high / xhigh / max（大小写、首尾空白容错），其余（含 none / minimal、
+// 非字符串、空）一律返回 ""，表示不强制。
+func (a *Account) GetOpenAIForcedReasoningEffort() string {
+	if a == nil {
+		return ""
+	}
+	switch v := strings.ToLower(strings.TrimSpace(a.GetExtraString("openai_force_reasoning_effort"))); v {
+	case "low", "medium", "high", "xhigh", "max":
+		return v
+	}
+	return ""
+}
+
 func (a *Account) GetClaudeUserID() string {
 	if v := strings.TrimSpace(a.GetExtraString("claude_user_id")); v != "" {
 		return v

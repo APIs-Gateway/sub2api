@@ -492,6 +492,10 @@ func isReasoningModel(model string) bool {
 	return (ok && major >= 5) || openai.IsGPT6SolOrLunaModelSpelling(model)
 }
 
+// IsReasoningModel is the exported form of isReasoningModel, for callers outside
+// apicompat that must follow the same "is this a reasoning model" rule.
+func IsReasoningModel(model string) bool { return isReasoningModel(model) }
+
 // openAIModelGeneration extracts N from a "gpt-N[.M][-suffix]" model id.
 // ok is false for non-GPT ids, malformed numeric generations, and GPT
 // families that carry no numeric generation (gpt-image-1, gpt-audio, ...).
