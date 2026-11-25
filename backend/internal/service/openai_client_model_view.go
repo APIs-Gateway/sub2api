@@ -34,6 +34,9 @@ var clientModelViewSkipKeys = map[string]struct{}{
 	// 代码、转写、日志概率、图片 base64、工具结果、引用与推理文本：都是模型正文或二进制，不碰。
 	"code": {}, "transcript": {}, "logprobs": {}, "partialimageb64": {}, "b64json": {}, "result": {},
 	"annotation": {}, "annotations": {}, "reasoningcontent": {}, "reasoningtext": {},
+	// 加密推理（chat 的 reasoning_details[].data、Anthropic/Gemini 风格的 signature）是不透明密文，
+	// 其中可能碰巧出现与上游模型名同形的字母数字串，改一个字节就解不开。
+	"reasoningdetails": {}, "signature": {}, "thoughtsignature": {},
 }
 
 // clientModelVariant 是外来名的一个写法，已切成小写的字母段/数字段。

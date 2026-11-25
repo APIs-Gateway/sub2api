@@ -897,6 +897,11 @@ type GatewayConfig struct {
 	// 任意深度的 model 类字段与错误/状态文案里的上游模型名（映射后的名字及上游回显的各种写法）统一换成用户请求的名字。
 	// 只改发给客户端的字节；模型正文、推理、工具参数、审计数据（upstream_response_model、ops 标记）不受影响。默认关闭。
 	ClientModelFullMapping bool `mapstructure:"client_model_full_mapping"`
+	// ChatCompletionsReasoningDetails 为 true 时，/v1/chat/completions 转 Responses 上游的响应里透出上游的加密推理
+	// （OpenRouter 风格的 reasoning_details，type=reasoning.encrypted，data 为 encrypted_content 原文）。
+	// 客户端下一轮带回 assistant 消息上的 reasoning_details 时，网关把它还原成 Responses 的 reasoning 项（该方向不受本开关控制）。
+	// 默认关闭，关闭时响应字节与不支持本功能时完全一致。
+	ChatCompletionsReasoningDetails bool `mapstructure:"chat_completions_reasoning_details"`
 	// NoAutoUnschedAccountIDs：名单内账号「不自动暂停调度」——因上游失败自动产生的任何停调度/冷却
 	// （429、529、401/403 置错、临时不可调度规则、流超时、单模型限流、运行时冷却、传输错误隔离、
 	// 代理流隔离）都不影响它被选中；管理员手动停用、过期、配额耗尽等仍然生效。
@@ -2215,6 +2220,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.disable_upstream_model_mismatch_block", false)
 	viper.SetDefault("gateway.upstream_model_mismatch_observe_account_ids", []int64{})
 	viper.SetDefault("gateway.client_model_full_mapping", false)
+	viper.SetDefault("gateway.chat_completions_reasoning_details", false)
 	viper.SetDefault("gateway.no_auto_unsched_account_ids", []int64{})
 	viper.SetDefault("gateway.model_downgrade_guard.enabled", false)
 	viper.SetDefault("gateway.model_downgrade_guard.threshold_count", 5)

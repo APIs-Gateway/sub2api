@@ -18,6 +18,25 @@ import (
 // choices[0].message.content, refusal parts into choices[0].message.refusal;
 // function_call items become tool_calls.
 func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatCompletionsResponse {
+	return ResponsesToChatCompletionsWithOptions(resp, model, ResponsesToChatCompletionsOptions{})
+}
+
+// ResponsesToChatCompletionsOptions carries optional behaviour for
+// ResponsesToChatCompletionsWithOptions. The zero value behaves exactly like
+// ResponsesToChatCompletions.
+type ResponsesToChatCompletionsOptions struct {
+	// ReasoningDetails 为 true 时：把 reasoning 项透出为 choices[0].message.reasoning_details
+	// （摘要项 reasoning.summary + 密文项 reasoning.encrypted，index 统一从 0 递增；一个都没有时不输出该键），
+	// 同时在 message.reasoning 里输出与 reasoning_content 相同的内容，并在相邻摘要 part 之间补空行。
+	ReasoningDetails bool
+	// FallbackReasoning 在 resp.Output 里生成不出任何 reasoning_details 元素时使用
+	// （终止事件 output 为空、密文/摘要只出现在 response.output_item.done 的场景）。
+	FallbackReasoning []ResponsesOutput
+}
+
+// ResponsesToChatCompletionsWithOptions is ResponsesToChatCompletions with
+// optional extras; see ResponsesToChatCompletionsOptions.
+func ResponsesToChatCompletionsWithOptions(resp *ResponsesResponse, model string, opts ResponsesToChatCompletionsOptions) *ChatCompletionsResponse {
 	id := resp.ID
 	if id == "" {
 		id = generateChatCmplID()
@@ -56,6 +75,11 @@ func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatComp
 				},
 			})
 		case "reasoning":
+			if opts.ReasoningDetails {
+				// 开关开启时相邻的摘要 part / reasoning 项之间用空行分隔，避免首尾直接粘连。
+				reasoningText = joinReasoningParagraphs(reasoningText, responsesReasoningTextSeparated(item))
+				break
+			}
 			reasoningText += responsesReasoningText(item)
 		case "web_search_call":
 			// silently consumed — results already incorporated into text output
@@ -72,6 +96,25 @@ func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatComp
 	}
 	if reasoningText != "" {
 		msg.ReasoningContent = reasoningText
+		if opts.ReasoningDetails {
+			// OpenRouter / Vercel AI SDK 等客户端读 reasoning，内容与 reasoning_content 相同。
+			msg.Reasoning = reasoningText
+		}
+	}
+	if opts.ReasoningDetails {
+		details := chatReasoningDetailsFromOutput(resp.Output)
+		if !chatReasoningDetailsHaveEncrypted(details) {
+			// 终止事件 output 为空时 reasoning 项是由增量重建的（只有摘要、没有密文）：
+			// 以 output_item.done 里记下的项为准。
+			if fb := chatReasoningDetailsFromOutput(opts.FallbackReasoning); len(fb) > 0 && (chatReasoningDetailsHaveEncrypted(fb) || len(details) == 0) {
+				details = fb
+			}
+		}
+		if len(details) > 0 {
+			if raw, err := json.Marshal(details); err == nil {
+				msg.ReasoningDetails = raw
+			}
+		}
 	}
 
 	finishReason := responsesStatusToChatFinishReason(resp.Status, resp.IncompleteDetails, toolCalls)
@@ -85,6 +128,80 @@ func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatComp
 	out.Usage = chatUsageFromResponsesUsage(resp.Usage)
 
 	return out
+}
+
+const reasoningParagraphSeparator = "\n\n"
+
+// joinReasoningParagraphs 把两段推理文本用空行连接；任一侧为空时不加分隔。
+func joinReasoningParagraphs(prev, next string) string {
+	if prev == "" || next == "" {
+		return prev + next
+	}
+	return prev + reasoningParagraphSeparator + next
+}
+
+// responsesReasoningTextSeparated 同 responsesReasoningText，但多个 summary_text part 之间用空行分隔。
+func responsesReasoningTextSeparated(item ResponsesOutput) string {
+	text := ""
+	for _, part := range item.Summary {
+		if part.Type == "summary_text" && part.Text != "" {
+			text = joinReasoningParagraphs(text, part.Text)
+		}
+	}
+	if text != "" {
+		return text
+	}
+	return responsesReasoningText(item)
+}
+
+// chatReasoningDetailsFromOutput 为每个 reasoning 项依次生成：有摘要文本时先一个 reasoning.summary 元素，
+// 有密文时再一个 reasoning.encrypted 元素；index 在整个数组里统一从 0 递增。
+func chatReasoningDetailsFromOutput(output []ResponsesOutput) []ChatReasoningDetail {
+	var details []ChatReasoningDetail
+	for i := range output {
+		if output[i].Type != "reasoning" {
+			continue
+		}
+		details = appendChatReasoningDetails(details, output[i])
+	}
+	return details
+}
+
+func chatReasoningDetailsHaveEncrypted(details []ChatReasoningDetail) bool {
+	for i := range details {
+		if details[i].Type == ChatReasoningDetailTypeEncrypted {
+			return true
+		}
+	}
+	return false
+}
+
+// reasoningSummaryJoined 把一个 reasoning 项全部 summary_text part 用空行连接（跳过空 part）。
+func reasoningSummaryJoined(item ResponsesOutput) string {
+	text := ""
+	for _, part := range item.Summary {
+		if part.Type == "summary_text" && part.Text != "" {
+			text = joinReasoningParagraphs(text, part.Text)
+		}
+	}
+	return text
+}
+
+// appendChatReasoningDetails 追加一个 reasoning 项对应的 [summary, encrypted] 元素，index 接着 details 现有长度。
+func appendChatReasoningDetails(details []ChatReasoningDetail, item ResponsesOutput) []ChatReasoningDetail {
+	if summary := reasoningSummaryJoined(item); summary != "" {
+		details = append(details, ChatReasoningDetail{
+			Type: ChatReasoningDetailTypeSummary, Summary: summary, ID: item.ID,
+			Format: ChatReasoningDetailFormatResponsesV1, Index: len(details),
+		})
+	}
+	if item.EncryptedContent != "" {
+		details = append(details, ChatReasoningDetail{
+			Type: ChatReasoningDetailTypeEncrypted, Data: item.EncryptedContent, ID: item.ID,
+			Format: ChatReasoningDetailFormatResponsesV1, Index: len(details),
+		})
+	}
+	return details
 }
 
 func responsesStatusToChatFinishReason(status string, details *ResponsesIncompleteDetails, toolCalls []ChatToolCall) string {
@@ -128,6 +245,17 @@ type ResponsesEventToChatState struct {
 	OutputIndexToArguments map[int]string
 	IncludeUsage           bool
 	Usage                  *ChatUsage
+
+	// ReasoningDetails 为 true 时，reasoning 项完成（response.output_item.done）或随终止事件
+	// 到达时下发 delta.reasoning_details（加密推理），同一个 item 只发一次。
+	ReasoningDetails bool
+
+	reasoningDetailsSent map[string]struct{}
+	nextReasoningDetail  int
+
+	// 开关开启时，相邻摘要 part（output_index/summary_index 变化）之间补一个空行分隔。
+	haveSummaryKey bool
+	lastSummaryKey [2]int
 }
 
 // NewResponsesEventToChatState returns an initialised stream state.
@@ -152,6 +280,8 @@ func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEvent
 		return resToChatHandleRefusalDelta(evt, state)
 	case "response.output_item.added":
 		return resToChatHandleOutputItemAdded(evt, state)
+	case "response.output_item.done":
+		return resToChatHandleOutputItemDone(evt, state)
 	case "response.function_call_arguments.delta",
 		// custom/freeform 工具（如新版 apply_patch）的输入增量与 function_call 参数增量同形，
 		// 均按 OutputIndex 累加到对应工具调用。
@@ -277,6 +407,54 @@ func resToChatHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 	})}
 }
 
+// resToChatHandleOutputItemDone 在 reasoning 项完成且带密文时下发一个 reasoning_details delta。
+// 开关关闭（默认）时恒为 nil，与此前 default 分支行为一致。
+func resToChatHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	if !state.ReasoningDetails || evt.Item == nil {
+		return nil
+	}
+	return resToChatReasoningDetailChunks(state, []ResponsesOutput{*evt.Item})
+}
+
+// resToChatReasoningDetailChunks 为尚未发送过的 reasoning 项各生成一个 delta chunk，
+// 一次带出该项的 [summary, encrypted]；没有摘要也没有密文的项不发。
+// 去重键：item id，没有 id 时用密文，再没有用摘要文本；index 在整条流内统一从 0 递增。
+func resToChatReasoningDetailChunks(state *ResponsesEventToChatState, items []ResponsesOutput) []ChatCompletionsChunk {
+	var chunks []ChatCompletionsChunk
+	for i := range items {
+		item := items[i]
+		if item.Type != "reasoning" {
+			continue
+		}
+		summary := reasoningSummaryJoined(item)
+		if summary == "" && item.EncryptedContent == "" {
+			continue
+		}
+		key := item.ID
+		if key == "" && item.EncryptedContent != "" {
+			key = "enc:" + item.EncryptedContent
+		}
+		if key == "" {
+			key = "sum:" + summary
+		}
+		if _, dup := state.reasoningDetailsSent[key]; dup {
+			continue
+		}
+		if state.reasoningDetailsSent == nil {
+			state.reasoningDetailsSent = make(map[string]struct{})
+		}
+		state.reasoningDetailsSent[key] = struct{}{}
+		// appendChatReasoningDetails 的 index 取自切片长度；这里用整流计数器偏移。
+		details := appendChatReasoningDetails(nil, item)
+		for j := range details {
+			details[j].Index += state.nextReasoningDetail
+		}
+		state.nextReasoningDetail += len(details)
+		chunks = append(chunks, makeChatDeltaChunk(state, ChatDelta{ReasoningDetails: details}))
+	}
+	return chunks
+}
+
 func resToChatHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
 	if evt.Delta == "" {
 		return nil
@@ -330,7 +508,19 @@ func resToChatHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 		return nil
 	}
 	reasoning := evt.Delta
-	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &reasoning})}
+	if state.ReasoningDetails && evt.Type == "response.reasoning_summary_text.delta" {
+		key := [2]int{evt.OutputIndex, evt.SummaryIndex}
+		if state.haveSummaryKey && key != state.lastSummaryKey {
+			reasoning = reasoningParagraphSeparator + reasoning
+		}
+		state.haveSummaryKey, state.lastSummaryKey = true, key
+	}
+	delta := ChatDelta{ReasoningContent: &reasoning}
+	if state.ReasoningDetails {
+		alias := reasoning
+		delta.Reasoning = &alias
+	}
+	return []ChatCompletionsChunk{makeChatDeltaChunk(state, delta)}
 }
 
 func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
@@ -365,6 +555,10 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	}
 
 	var chunks []ChatCompletionsChunk
+	// 终止事件的 output 里带密文、却没有走过 output_item.done 的 reasoning 项，在 finish 之前补发（已发过的跳过）。
+	if state.ReasoningDetails && evt.Response != nil {
+		chunks = append(chunks, resToChatReasoningDetailChunks(state, evt.Response.Output)...)
+	}
 	chunks = append(chunks, makeChatFinishChunk(state, finishReason))
 
 	if state.IncludeUsage && state.Usage != nil {
@@ -502,6 +696,13 @@ type BufferedResponseAccumulator struct {
 	reasoning            strings.Builder
 	funcCalls            []bufferedFuncCall
 	outputIndexToFuncIdx map[int]int
+	// doneReasoning 被动记录 response.output_item.done 里带密文或摘要的 reasoning 项，
+	// 不参与 BuildOutput/SupplementResponseOutput，仅供 DoneReasoningItems 读取。
+	doneReasoning []ResponsesOutput
+	// reasoningSeparated 与 reasoning 同源，但相邻摘要 part 之间有空行；仅供 SeparatedReasoningText 读取。
+	reasoningSeparated strings.Builder
+	haveSummaryKey     bool
+	lastSummaryKey     [2]int
 }
 
 // NewBufferedResponseAccumulator returns an initialised accumulator.
@@ -557,8 +758,63 @@ func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) 
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 		if event.Delta != "" {
 			_, _ = a.reasoning.WriteString(event.Delta)
+			if event.Type == "response.reasoning_summary_text.delta" {
+				key := [2]int{event.OutputIndex, event.SummaryIndex}
+				if a.haveSummaryKey && key != a.lastSummaryKey {
+					_, _ = a.reasoningSeparated.WriteString(reasoningParagraphSeparator)
+				}
+				a.haveSummaryKey, a.lastSummaryKey = true, key
+			}
+			_, _ = a.reasoningSeparated.WriteString(event.Delta)
+		}
+	case "response.output_item.done":
+		a.recordDoneReasoning(event.Item)
+	}
+}
+
+func (a *BufferedResponseAccumulator) recordDoneReasoning(item *ResponsesOutput) {
+	if item == nil || item.Type != "reasoning" {
+		return
+	}
+	summary := reasoningSummaryJoined(*item)
+	if item.EncryptedContent == "" && summary == "" {
+		return
+	}
+	for i := range a.doneReasoning {
+		prev := &a.doneReasoning[i]
+		if prev.EncryptedContent == item.EncryptedContent && prev.ID == item.ID && reasoningSummaryJoined(*prev) == summary {
+			return
 		}
 	}
+	a.doneReasoning = append(a.doneReasoning, ResponsesOutput{
+		Type:             "reasoning",
+		ID:               item.ID,
+		EncryptedContent: item.EncryptedContent,
+		Summary:          item.Summary,
+	})
+}
+
+// SeparateReasoningSummary 把 SupplementResponseOutput 用增量拼出的推理摘要（相邻 part 直接粘连）
+// 换成带空行分隔的版本。只处理「output 整个由增量重建」留下的单 part 摘要，终止事件自带的 output 不动。
+func (a *BufferedResponseAccumulator) SeparateReasoningSummary(resp *ResponsesResponse) {
+	if resp == nil || a.reasoning.Len() == 0 || a.reasoningSeparated.Len() == a.reasoning.Len() {
+		return
+	}
+	plain := a.reasoning.String()
+	for i := range resp.Output {
+		item := &resp.Output[i]
+		if item.Type == "reasoning" && len(item.Summary) == 1 && item.Summary[0].Text == plain {
+			item.Summary[0].Text = a.reasoningSeparated.String()
+			return
+		}
+	}
+}
+
+// DoneReasoningItems returns the reasoning items (id, summary and
+// encrypted_content only) seen in response.output_item.done events that carry
+// a summary or ciphertext, in arrival order.
+func (a *BufferedResponseAccumulator) DoneReasoningItems() []ResponsesOutput {
+	return a.doneReasoning
 }
 
 // HasContent reports whether any content has been accumulated.

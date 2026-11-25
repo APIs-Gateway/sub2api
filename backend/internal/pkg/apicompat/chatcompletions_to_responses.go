@@ -3,6 +3,7 @@ package apicompat
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -246,7 +247,11 @@ func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	var items []ResponsesInputItem
 	content := ""
 
-	if m.ReasoningContent != "" {
+	// 客户端带回的 reasoning_details（type=reasoning.encrypted）还原成 Responses reasoning 项，
+	// 排在本条 assistant 消息对应的所有 input 项之前。已有有效加密项时不再把
+	// reasoning_content 拼成 <thinking> 文本（避免同一段推理重复）；没有时保持原行为。
+	items = append(items, reasoningEncryptedInputItems(m.ReasoningDetails)...)
+	if m.ReasoningContent != "" && len(items) == 0 {
 		content = "<thinking>" + m.ReasoningContent + "</thinking>"
 	}
 
@@ -609,4 +614,108 @@ func convertChatFunctionCallToToolChoice(raw json.RawMessage) (json.RawMessage, 
 		"type": "function",
 		"name": obj.Name,
 	})
+}
+
+// chatReasoningDetailIn 是请求方向宽松解析出的 reasoning_details 元素。
+type chatReasoningDetailIn struct {
+	pos     int
+	key     float64
+	Type    string   `json:"type"`
+	Data    string   `json:"data"`
+	ID      string   `json:"id"`
+	Format  string   `json:"format"`
+	Index   *float64 `json:"index"`
+	Summary string   `json:"summary"`
+	Text    string   `json:"text"`
+}
+
+// parseChatReasoningDetails 宽松解析 reasoning_details：不是数组、或元素无法解析（类型不符等）时跳过；
+// 结果按 index 排序（缺 index 的按其在数组中的位置），相同时保持数组顺序。
+func parseChatReasoningDetails(raw json.RawMessage) []chatReasoningDetailIn {
+	if len(raw) == 0 {
+		return nil
+	}
+	var elems []json.RawMessage
+	if err := json.Unmarshal(raw, &elems); err != nil {
+		return nil
+	}
+	var out []chatReasoningDetailIn
+	for pos, elem := range elems {
+		var d chatReasoningDetailIn
+		if err := json.Unmarshal(elem, &d); err != nil {
+			continue
+		}
+		d.pos = pos
+		d.key = float64(pos)
+		if d.Index != nil {
+			d.key = *d.Index
+		}
+		out = append(out, d)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].key < out[j].key })
+	return out
+}
+
+// reasoningEncryptedInputItems 把 assistant 消息上的 reasoning_details 还原成 Responses reasoning 输入项。
+// 只认 type=="reasoning.encrypted"、data 非空、format 为 "openai-responses-v1" 或缺省的元素；
+// 其他 type（reasoning.summary / reasoning.text 等）和其他 format 一律忽略，无法解析的元素同样忽略。
+func reasoningEncryptedInputItems(raw json.RawMessage) []ResponsesInputItem {
+	var out []ResponsesInputItem
+	for _, d := range parseChatReasoningDetails(raw) {
+		if d.Type != ChatReasoningDetailTypeEncrypted || d.Data == "" {
+			continue
+		}
+		if d.Format != "" && d.Format != ChatReasoningDetailFormatResponsesV1 {
+			continue
+		}
+		out = append(out, ResponsesInputItem{
+			Type:             "reasoning",
+			ID:               d.ID,
+			Summary:          json.RawMessage("[]"),
+			EncryptedContent: d.Data,
+		})
+	}
+	return out
+}
+
+// reasoningDetailsPlainText 取 reasoning_details 里 reasoning.summary / reasoning.text 元素的文本，按顺序用空行连接。
+func reasoningDetailsPlainText(raw json.RawMessage) string {
+	text := ""
+	for _, d := range parseChatReasoningDetails(raw) {
+		switch d.Type {
+		case ChatReasoningDetailTypeSummary:
+			if d.Summary != "" {
+				text = joinReasoningParagraphs(text, d.Summary)
+			}
+		case ChatReasoningDetailTypeText:
+			if d.Text != "" {
+				text = joinReasoningParagraphs(text, d.Text)
+			}
+		}
+	}
+	return text
+}
+
+// NormalizeChatReasoningInput 把 OpenRouter 风格的推理回传统一折进 reasoning_content，供 <thinking> 文本方式使用
+// （仅在 gateway.chat_completions_reasoning_details 开启时由网关调用）：
+//   - assistant 消息没有 reasoning_content 时，先取别名 reasoning；
+//   - 仍为空时，取 reasoning_details 里 reasoning.summary / reasoning.text 元素的文本；
+//   - 消息带有有效的 reasoning.encrypted 元素时不动（由 reasoning 项还原，不拼 <thinking>）。
+//
+// 就地修改 req.Messages。
+func NormalizeChatReasoningInput(req *ChatCompletionsRequest) {
+	if req == nil {
+		return
+	}
+	for i := range req.Messages {
+		m := &req.Messages[i]
+		if m.Role != "assistant" || m.ReasoningContent != "" || len(reasoningEncryptedInputItems(m.ReasoningDetails)) > 0 {
+			continue
+		}
+		if m.Reasoning != "" {
+			m.ReasoningContent = m.Reasoning
+			continue
+		}
+		m.ReasoningContent = reasoningDetailsPlainText(m.ReasoningDetails)
+	}
 }

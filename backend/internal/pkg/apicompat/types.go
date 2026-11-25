@@ -269,6 +269,8 @@ type ResponsesInputItem struct {
 
 	// type=reasoning (multi-turn replay of encrypted reasoning)
 	EncryptedContent string `json:"encrypted_content,omitempty"`
+	// Summary 仅 chat reasoning_details 还原出的 reasoning 项使用（固定 []，Responses 要求该字段存在）。
+	Summary json.RawMessage `json:"summary,omitempty"`
 
 	// type=function_call
 	CallID    string `json:"call_id,omitempty"`
@@ -648,6 +650,10 @@ type ChatMessage struct {
 	Refusal          string          `json:"refusal,omitempty"`
 	ReasoningContent string          `json:"reasoning_content,omitempty"`
 	Reasoning        string          `json:"reasoning,omitempty"`
+	// ReasoningDetails 是 OpenRouter 风格的结构化推理数组（元素见 ChatReasoningDetail）。
+	// 保持原始 JSON：请求方向由 reasoningEncryptedInputItems 宽松解析（忽略类型不符的非加密元素），
+	// 响应方向由网关在开关开启时填入。
+	ReasoningDetails json.RawMessage `json:"reasoning_details,omitempty"`
 	Name             string          `json:"name,omitempty"`
 	ToolCalls        []ChatToolCall  `json:"tool_calls,omitempty"`
 	ToolCallID       string          `json:"tool_call_id,omitempty"`
@@ -655,6 +661,31 @@ type ChatMessage struct {
 	// Legacy function calling
 	FunctionCall *ChatFunctionCall `json:"function_call,omitempty"`
 }
+
+// ChatReasoningDetail 是 reasoning_details 数组里的一个元素（OpenRouter 风格）。
+// 字段名与取值是网关与客户端的契约：
+//   - type=="reasoning.encrypted"：data 为 Responses reasoning 项 encrypted_content 原文；
+//   - type=="reasoning.summary"：summary 为该项全部 summary part 用空行连接的文本；
+//   - format 固定 "openai-responses-v1"，index 在整个数组里统一从 0 递增；id 为空时省略。
+type ChatReasoningDetail struct {
+	Type    string `json:"type"`
+	Summary string `json:"summary,omitempty"`
+	Data    string `json:"data,omitempty"`
+	ID      string `json:"id,omitempty"`
+	Format  string `json:"format"`
+	Index   int    `json:"index"`
+}
+
+const (
+	// ChatReasoningDetailTypeEncrypted 是加密推理元素的 type。
+	ChatReasoningDetailTypeEncrypted = "reasoning.encrypted"
+	// ChatReasoningDetailTypeSummary 是推理摘要元素的 type。
+	ChatReasoningDetailTypeSummary = "reasoning.summary"
+	// ChatReasoningDetailTypeText 是原始推理文本元素的 type（只在请求方向被识别）。
+	ChatReasoningDetailTypeText = "reasoning.text"
+	// ChatReasoningDetailFormatResponsesV1 是 Responses encrypted_content 的 format 标识。
+	ChatReasoningDetailFormatResponsesV1 = "openai-responses-v1"
+)
 
 // ChatContentPart is a typed content part in a multi-modal message.
 type ChatContentPart struct {
@@ -777,12 +808,14 @@ type ChatChunkChoice struct {
 
 // ChatDelta carries incremental content in a streaming chunk.
 type ChatDelta struct {
-	Role             string         `json:"role,omitempty"`
-	Content          *string        `json:"content,omitempty"` // pointer: omit when not present, null vs "" matters
-	Refusal          *string        `json:"refusal,omitempty"`
-	ReasoningContent *string        `json:"reasoning_content,omitempty"`
-	Reasoning        *string        `json:"reasoning,omitempty"`
-	ToolCalls        []ChatToolCall `json:"tool_calls,omitempty"`
+	Role             string  `json:"role,omitempty"`
+	Content          *string `json:"content,omitempty"` // pointer: omit when not present, null vs "" matters
+	Refusal          *string `json:"refusal,omitempty"`
+	ReasoningContent *string `json:"reasoning_content,omitempty"`
+	Reasoning        *string `json:"reasoning,omitempty"`
+	// ReasoningDetails：reasoning 项完成时一次性下发的加密推理（元素见 ChatReasoningDetail）。
+	ReasoningDetails []ChatReasoningDetail `json:"reasoning_details,omitempty"`
+	ToolCalls        []ChatToolCall        `json:"tool_calls,omitempty"`
 }
 
 func (m ChatMessage) reasoningText() string {

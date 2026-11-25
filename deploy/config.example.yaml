@@ -207,6 +207,9 @@ gateway:
   # When true, everything returned to the user shows only the model name the user requested (model fields at any depth and upstream model names inside error/status text are rewritten; output text and audit data are untouched). Default: false
   # 为 true 时，返回给用户的内容里只出现用户请求的模型名：任意深度的 model 类字段、错误/状态文案里的上游模型名统一换成用户请求的名字（输出正文和审计数据不改）。默认 false，仅 free 站这类需要隐藏上游模型的站点开启
   client_model_full_mapping: false
+  # When true, /v1/chat/completions responses (Responses upstream) carry the upstream encrypted reasoning as OpenRouter-style reasoning_details (type=reasoning.encrypted); the client sending it back on the next turn is always restored to a Responses reasoning item regardless of this switch. Default: false
+  # 为 true 时，/v1/chat/completions（走 Responses 上游）的响应透出上游加密推理，格式为 OpenRouter 风格的 reasoning_details（type=reasoning.encrypted）；客户端下一轮带回该字段时，网关总会还原成 Responses 的 reasoning 项（该方向不受本开关控制）。默认 false
+  chat_completions_reasoning_details: false
   # Optional cross-request quarantine after repeated, pre-delivery model
   # substitutions. Only explicitly listed sent/response model pairs count.
   # Keep disabled until the affected pool and pairs are confirmed in usage logs.
