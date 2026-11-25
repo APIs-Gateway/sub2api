@@ -25,7 +25,7 @@ const chatRDModel = "gpt-6-luna"
 func chatRDSSE(events ...string) string {
 	var sb strings.Builder
 	for _, e := range events {
-		sb.WriteString("data: " + e + "\n\n")
+		_, _ = sb.WriteString("data: " + e + "\n\n")
 	}
 	return sb.String()
 }
@@ -159,7 +159,7 @@ func TestChatReasoningDetails_Stream_OnEmitsOnceInOrder(t *testing.T) {
 		case d.Get("reasoning_content").Exists():
 			kinds = append(kinds, "reasoning")
 			require.Equal(t, d.Get("reasoning_content").String(), d.Get("reasoning").String(), "alias equals reasoning_content")
-			reasoning.WriteString(d.Get("reasoning_content").String())
+			_, _ = reasoning.WriteString(d.Get("reasoning_content").String())
 		case d.Get("content").String() == "hello":
 			kinds = append(kinds, "content")
 		}

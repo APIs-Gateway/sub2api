@@ -19,7 +19,7 @@ func chatInputText(t *testing.T, item ResponsesInputItem) string {
 	require.NoError(t, json.Unmarshal(item.Content, &parts))
 	var sb strings.Builder
 	for _, p := range parts {
-		sb.WriteString(p.Text)
+		_, _ = sb.WriteString(p.Text)
 	}
 	return sb.String()
 }
@@ -366,7 +366,7 @@ func TestResponsesEventToChatChunks_SummaryDeltas_SeparatorOnlyWhenSwitchOn(t *t
 		for _, ev := range events {
 			for _, c := range ResponsesEventToChatChunks(ev, state) {
 				if rc := c.Choices[0].Delta.ReasoningContent; rc != nil {
-					sb.WriteString(*rc)
+					_, _ = sb.WriteString(*rc)
 				}
 			}
 		}
