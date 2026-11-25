@@ -374,3 +374,57 @@ func TestForcedReasoningEffort_Forward_CompactSkipped(t *testing.T) {
 	require.Equal(t, "none", gjson.GetBytes(forced.lastBody, "reasoning.effort").String())
 	require.Equal(t, string(plain.lastBody), string(forced.lastBody))
 }
+
+// ---- 错误分支与 Cursor 形态（Responses 形态的 chat 请求） ----
+
+// reasoning 是数组时 sjson 无法写入 reasoning.effort：返回错误，body 原样不动。
+func TestApplyOpenAIForcedReasoningEffort_SetError(t *testing.T) {
+	in := `{"model":"gpt-6-luna","reasoning":[1]}`
+	out, changed, err := applyOpenAIForcedReasoningEffort(forcedEffortAccount("high"), []byte(in))
+	require.Error(t, err)
+	require.False(t, changed)
+	require.Equal(t, in, string(out))
+
+	out, changed, err = applyOpenAIForcedReasoningEffortForUpstream(forcedEffortAccount("high"), []byte(in), forcedEffortLunaModel)
+	require.Error(t, err)
+	require.False(t, changed)
+	require.Equal(t, in, string(out))
+}
+
+func TestForcedReasoningEffort_Forward_SetErrorStopsBeforeUpstream(t *testing.T) {
+	upstream := newForcedEffortSSEUpstream(forcedEffortLunaModel)
+	svc := newOpenAIImageGenerationControlTestService(upstream)
+	c, _ := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.144.1")
+	body := `{"model":"gpt-6-luna","stream":true,"reasoning":[1],"input":"hi"}`
+	result, err := svc.Forward(context.Background(), c, forcedEffortAccount("high"), []byte(body))
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Contains(t, err.Error(), "forced reasoning effort")
+	require.Empty(t, upstream.lastBody, "request must not reach upstream")
+}
+
+// Cursor 形态：chat 入口收到 Responses 形态的 body（有 input、没有 messages）会原样转发，
+// 强制档位同样要生效，用量日志记录强制后的档位。
+func TestForcedReasoningEffort_ChatCompletions_ResponsesShape(t *testing.T) {
+	const body = `{"model":"gpt-6-luna","stream":false,"temperature":0.7,"reasoning":{"effort":"none"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`
+	upstream, result := runForcedEffortChat(t, forcedEffortAccount("high"), body)
+	require.Equal(t, "high", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "temperature").Exists())
+	require.NotNil(t, result.ReasoningEffort)
+	require.Equal(t, "high", *result.ReasoningEffort)
+
+	plain, _ := runForcedEffortChat(t, forcedEffortAccount(nil), body)
+	require.Equal(t, "none", gjson.GetBytes(plain.lastBody, "reasoning.effort").String())
+}
+
+func TestForcedReasoningEffort_ChatCompletions_ResponsesShape_SetError(t *testing.T) {
+	upstream := newForcedEffortSSEUpstream(forcedEffortLunaModel)
+	svc := newOpenAIImageGenerationControlTestService(upstream)
+	body := `{"model":"gpt-6-luna","stream":false,"reasoning":[1],"input":"hi"}`
+	c := newForcedEffortCompatContext("/v1/chat/completions", []byte(body))
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, forcedEffortAccount("high"), []byte(body), "", "")
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Contains(t, err.Error(), "forced reasoning effort")
+	require.Empty(t, upstream.lastBody)
+}
