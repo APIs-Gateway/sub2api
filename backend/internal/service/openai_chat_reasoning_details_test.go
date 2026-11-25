@@ -55,7 +55,7 @@ func newChatRDService(upstream *httpUpstreamRecorder, enabled bool) (*OpenAIGate
 	cfg.Gateway.ChatCompletionsReasoningDetails = enabled
 	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
 	account := &Account{
-		ID: 7, Name: "a6", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
+		ID: 7, Name: "acc", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
 		Status: StatusActive, Schedulable: true,
 		Credentials: map[string]any{"api_key": "fixture-key", "base_url": "https://api.openai.com"},
 		Extra:       map[string]any{"openai_responses_supported": true},
@@ -411,17 +411,24 @@ func TestIsOpenAIInvalidEncryptedContentResponse(t *testing.T) {
 }
 
 func TestStripChatReasoningDetails(t *testing.T) {
-	out, changed := stripChatReasoningDetails([]byte(`{"messages":[{"role":"user","content":"u"},{"role":"assistant","reasoning_details":[1],"content":"a"},{"role":"assistant","reasoning_details":[],"content":"b"}]}`))
-	require.True(t, changed)
-	require.JSONEq(t, `{"messages":[{"role":"user","content":"u"},{"role":"assistant","content":"a"},{"role":"assistant","content":"b"}]}`, string(out))
+	out, count := stripChatReasoningDetails([]byte(`{"messages":[{"role":"user","content":"u"},` +
+		`{"role":"assistant","reasoning_details":[{"type":"reasoning.encrypted","data":"X"}],"content":"a"},` +
+		`{"role":"assistant","reasoning_details":[{"type":"reasoning.summary","summary":"S"},{"type":"reasoning.encrypted","data":"Y"}],"content":"b"},` +
+		`{"role":"assistant","reasoning_details":[{"type":"reasoning.summary","summary":"only"}],"content":"c"},` +
+		`{"role":"assistant","reasoning_details":"oops","content":"d"}]}`))
+	require.Equal(t, 2, count)
+	require.JSONEq(t, `{"messages":[{"role":"user","content":"u"},{"role":"assistant","content":"a"},`+
+		`{"role":"assistant","reasoning_details":[{"type":"reasoning.summary","summary":"S"}],"content":"b"},`+
+		`{"role":"assistant","reasoning_details":[{"type":"reasoning.summary","summary":"only"}],"content":"c"},`+
+		`{"role":"assistant","reasoning_details":"oops","content":"d"}]}`, string(out))
 
-	same := []byte(`{"messages":[{"role":"user","content":"u"}]}`)
-	out, changed = stripChatReasoningDetails(same)
-	require.False(t, changed)
+	same := []byte(`{"messages":[{"role":"user","content":"u"},{"role":"assistant","reasoning_details":[{"type":"reasoning.summary","summary":"s"}]}]}`)
+	out, count = stripChatReasoningDetails(same)
+	require.Equal(t, 0, count)
 	require.Equal(t, string(same), string(out))
 
-	out, changed = stripChatReasoningDetails([]byte(`{"input":"x"}`))
-	require.False(t, changed)
+	out, count = stripChatReasoningDetails([]byte(`{"input":"x"}`))
+	require.Equal(t, 0, count)
 	require.Equal(t, `{"input":"x"}`, string(out))
 }
 
@@ -452,19 +459,19 @@ func TestEnsureChatResponsesReasoningSummary_Branches(t *testing.T) {
 // ---- 完全映射：密文不被改写 ----
 
 func TestClientModelView_DoesNotRewriteEncryptedReasoning(t *testing.T) {
-	// 外来名 a6api-pro 与 base64 里碰巧出现的字母数字串同形。
-	view, ok := newClientModelView("luna-public", "a6api-pro")
+	// 外来名 vendorx-pro 与 base64 里碰巧出现的字母数字串同形。
+	view, ok := newClientModelView("luna-public", "vendorx-pro")
 	require.True(t, ok)
-	require.Equal(t, "luna-public", view.scrubText("a6api-pro"), "sanity: the name itself would be rewritten in plain text")
+	require.Equal(t, "luna-public", view.scrubText("vendorx-pro"), "sanity: the name itself would be rewritten in plain text")
 
-	cipher := "gAAAAA6api-pro6apiA6API-PRO=="
+	cipher := "gAAAAA6vendorx-pro6vendorxA6VENDORX-PRO=="
 	payloads := []string{
-		`{"id":"c1","model":"a6api-pro","reasoning_details":[{"type":"reasoning.encrypted","data":"` + cipher + `","id":"a6api-pro","format":"openai-responses-v1","index":0}]}`,
-		`{"model":"a6api-pro","message":{"signature":"` + cipher + `"}}`,
-		`{"model":"a6api-pro","thoughtSignature":"` + cipher + `"}`,
-		`{"model":"a6api-pro","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"` + cipher + `"}]}}]}`,
+		`{"id":"c1","model":"vendorx-pro","reasoning_details":[{"type":"reasoning.encrypted","data":"` + cipher + `","id":"vendorx-pro","format":"openai-responses-v1","index":0}]}`,
+		`{"model":"vendorx-pro","message":{"signature":"` + cipher + `"}}`,
+		`{"model":"vendorx-pro","thoughtSignature":"` + cipher + `"}`,
+		`{"model":"vendorx-pro","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"` + cipher + `"}]}}]}`,
 		`{"type":"response.output_item.done","item":{"type":"reasoning","encrypted_content":"` + cipher + `"}}`,
-		`{"type":"response.completed","response":{"model":"a6api-pro","output":[{"type":"reasoning","encrypted_content":"` + cipher + `"}]}}`,
+		`{"type":"response.completed","response":{"model":"vendorx-pro","output":[{"type":"reasoning","encrypted_content":"` + cipher + `"}]}}`,
 	}
 	for _, p := range payloads {
 		out := string(view.alignPayload([]byte(p)))
@@ -472,4 +479,45 @@ func TestClientModelView_DoesNotRewriteEncryptedReasoning(t *testing.T) {
 	}
 	// model 字段本身仍被改写。
 	require.Contains(t, string(view.alignPayload([]byte(payloads[1]))), `"model":"luna-public"`)
+}
+
+// 客户端只带回 reasoning_details=[summary, encrypted]、不带 reasoning_content：重试只删密文项，
+// 摘要元素留下来生成 <thinking>。
+func TestChatReasoningDetails_RetryKeepsSummaryElementsForThinking(t *testing.T) {
+	bad := `{"error":{"type":"invalid_request_error","code":"invalid_encrypted_content","message":"x"}}`
+	up := &httpUpstreamRecorder{responses: []*http.Response{
+		chatRDResponse(http.StatusBadRequest, bad),
+		chatRDResponse(http.StatusOK, chatRDFullSSE()),
+	}}
+	svc, acc := newChatRDService(up, true)
+	body := `{"model":"gpt-6-luna","stream":false,"messages":[
+		{"role":"user","content":"hi"},
+		{"role":"assistant","content":"earlier","reasoning_details":[
+			{"type":"reasoning.summary","summary":"SUMMARY-TEXT","index":0},
+			{"type":"reasoning.encrypted","data":"ENC-OLD","id":"rs_old","index":1}]},
+		{"role":"user","content":"again"}]}`
+	_, _, _, err := runChatRD(t, svc, acc, body)
+	require.NoError(t, err)
+	require.Len(t, up.bodies, 2)
+	require.Contains(t, string(up.bodies[0]), "ENC-OLD")
+	second := gjson.GetBytes(up.bodies[1], "input").Array()
+	require.Len(t, second, 3)
+	require.NotContains(t, string(up.bodies[1]), "ENC-OLD")
+	require.NotContains(t, string(up.bodies[1]), `"type":"reasoning"`)
+	require.Equal(t, "<thinking>SUMMARY-TEXT</thinking>\nearlier", second[1].Get("content.0.text").String())
+}
+
+func TestChatReasoningDetails_InvalidIDOmittedButItemKept(t *testing.T) {
+	up := chatRDUpstream(chatRDFullSSE())
+	svc, acc := newChatRDService(up, false)
+	body := `{"model":"gpt-6-luna","stream":false,"messages":[
+		{"role":"user","content":"hi"},
+		{"role":"assistant","content":"a","reasoning_details":[{"type":"reasoning.encrypted","data":"E1","id":"item_bad"}]},
+		{"role":"user","content":"b"}]}`
+	_, _, _, err := runChatRD(t, svc, acc, body)
+	require.NoError(t, err)
+	item := gjson.GetBytes(up.lastBody, "input.1")
+	require.Equal(t, "reasoning", item.Get("type").String())
+	require.Equal(t, "E1", item.Get("encrypted_content").String())
+	require.False(t, item.Get("id").Exists())
 }

@@ -369,9 +369,12 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		// 剥掉请求里的 reasoning_details，退回 <thinking> 文本方式只重试一次。
 		if !isResponsesShape && resp.StatusCode == http.StatusBadRequest &&
 			isOpenAIInvalidEncryptedContentResponse(respBody) {
-			if retryBody, stripped := stripChatReasoningDetails(body); stripped {
-				logger.L().Info("openai chat_completions: invalid_encrypted_content, retrying without reasoning_details",
-					zap.Int64("account_id", account.ID), zap.Int("upstream_status", resp.StatusCode))
+			if retryBody, stripped := stripChatReasoningDetails(body); stripped > 0 {
+				// signature 丢失：上游解不开的密文留着也没用，剥掉后退回文本方式；这里留一条 warn 供统计。
+				logger.L().Warn("openai chat_completions: invalid_encrypted_content, stripped encrypted reasoning and retrying",
+					zap.Int64("account_id", account.ID),
+					zap.Int("stripped_encrypted_items", stripped),
+					zap.Int("upstream_status", resp.StatusCode))
 				cancelUpstream()
 				return s.ForwardAsChatCompletions(ctx, c, account, retryBody, callerPromptCacheKey, defaultMappedModel)
 			}
@@ -549,27 +552,49 @@ func isOpenAIInvalidEncryptedContentResponse(respBody []byte) bool {
 		strings.Contains(msg, "could not be decrypted or parsed")
 }
 
-// stripChatReasoningDetails 删掉 chat 请求体里所有 messages[].reasoning_details，返回新 body 与是否有改动。
-// 其他字节原样保留，所以被还原成 reasoning 项的 reasoning_content 会回到 <thinking> 文本方式。
-func stripChatReasoningDetails(body []byte) ([]byte, bool) {
+// stripChatReasoningDetails 删掉 chat 请求体里 messages[].reasoning_details 中 type=="reasoning.encrypted" 的元素，
+// 返回新 body 与被删掉的密文元素个数。reasoning.summary / reasoning.text 元素保留（重入后由 NormalizeChatReasoningInput
+// 生成 <thinking>）；删完数组为空时连键一起删。其他字节原样保留，所以被还原成 reasoning 项的
+// reasoning_content 会回到 <thinking> 文本方式。
+func stripChatReasoningDetails(body []byte) ([]byte, int) {
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.IsArray() {
-		return body, false
+		return body, 0
 	}
 	out := body
-	changed := false
+	count := 0
 	for i, msg := range messages.Array() {
-		if !msg.Get("reasoning_details").Exists() {
+		details := msg.Get("reasoning_details")
+		if !details.IsArray() {
 			continue
 		}
-		next, err := sjson.DeleteBytes(out, fmt.Sprintf("messages.%d.reasoning_details", i))
+		var kept []string
+		dropped := 0
+		for _, el := range details.Array() {
+			if el.Get("type").String() == apicompat.ChatReasoningDetailTypeEncrypted {
+				dropped++
+				continue
+			}
+			kept = append(kept, el.Raw)
+		}
+		if dropped == 0 {
+			continue
+		}
+		path := fmt.Sprintf("messages.%d.reasoning_details", i)
+		var next []byte
+		var err error
+		if len(kept) == 0 {
+			next, err = sjson.DeleteBytes(out, path)
+		} else {
+			next, err = sjson.SetRawBytes(out, path, []byte("["+strings.Join(kept, ",")+"]"))
+		}
 		if err != nil {
-			return body, false
+			return body, 0
 		}
 		out = next
-		changed = true
+		count += dropped
 	}
-	return out, changed
+	return out, count
 }
 
 func normalizeResponsesRequestServiceTier(req *apicompat.ResponsesRequest) {

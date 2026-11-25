@@ -513,3 +513,67 @@ func TestResponsesToChatCompletions_ReasoningDetailsFallbackSelection(t *testing
 	out = ResponsesToChatCompletionsWithOptions(resp, "m", ResponsesToChatCompletionsOptions{ReasoningDetails: true, FallbackReasoning: withEnc})
 	require.Contains(t, string(out.Choices[0].Message.ReasoningDetails), `"data":"E"`)
 }
+
+// ---------------------------------------------------------------------------
+// 返工：孤立 reasoning 项、宽松解析、id 校验
+// ---------------------------------------------------------------------------
+
+func TestChatReasoningDetailsRequest_OrphanReasoningItemKeptWithEmptyAssistantMessage(t *testing.T) {
+	enc := `{"type":"reasoning.encrypted","data":"ENC","id":"rs_1"}`
+	for _, msg := range []string{
+		`{"role":"assistant","reasoning_details":[` + enc + `]}`,
+		`{"role":"assistant","content":"","reasoning_content":"RC","reasoning_details":[` + enc + `]}`,
+		`{"role":"assistant","reasoning":"AL","reasoning_details":[` + enc + `,{"type":"reasoning.summary","summary":"SU"}]}`,
+	} {
+		items := convertChatBodyForTest(t, `{"messages":[`+msg+`]}`)
+		require.Len(t, items, 2, msg)
+		require.Equal(t, "reasoning", items[0].Type, msg)
+		require.Equal(t, "ENC", items[0].EncryptedContent, msg)
+		require.Equal(t, "message", items[1].Type, msg)
+		raw, err := json.Marshal(items[1])
+		require.NoError(t, err)
+		require.JSONEq(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":""}]}`, string(raw), msg)
+		require.NotContains(t, string(raw), "thinking")
+	}
+	// 有 tool_calls 时不补空 message，reasoning 项排在 function_call 之前。
+	items := convertChatBodyForTest(t, `{"messages":[{"role":"assistant","reasoning_details":[`+enc+`],"tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{}"}}]}]}`)
+	require.Len(t, items, 2)
+	require.Equal(t, "reasoning", items[0].Type)
+	require.Equal(t, "function_call", items[1].Type)
+	// 没有有效密文的空 assistant 消息：什么也不生成，和改动前一致。
+	items = convertChatBodyForTest(t, `{"messages":[{"role":"assistant","reasoning_details":[{"type":"reasoning.summary","summary":"x"}]}]}`)
+	require.Empty(t, items)
+}
+
+func TestChatReasoningDetailsRequest_LenientElementParsing(t *testing.T) {
+	items := convertChatBodyForTest(t, `{"messages":[{"role":"assistant","content":"x","reasoning_details":[
+		{"type":"reasoning.summary","summary":["not","a","string"],"text":5,"id":7,"format":false,"index":"zero"},
+		{"type":"reasoning.encrypted","data":"E-STR","index":"1","summary":["arr"],"text":{"a":1},"format":["x"],"id":[1]},
+		{"type":"reasoning.encrypted","data":"E-NUM","index":0.5,"id":"rs_ok"},
+		{"type":["bad"],"data":"DROPPED"},
+		{"type":"reasoning.encrypted","data":["bad"]},
+		{"type":"reasoning.encrypted","data":"E-BADIDX","index":{"a":1}}]}]}`)
+	var got []string
+	for _, it := range items {
+		if it.Type == "reasoning" {
+			got = append(got, it.EncryptedContent)
+		}
+	}
+	// E-BADIDX 的 index 当缺省，按数组位置（5）排在最后；E-NUM(0.5) < E-STR("1") 。
+	require.Equal(t, []string{"E-NUM", "E-STR", "E-BADIDX"}, got)
+	// 类型不对的 id 当缺省，不报错。
+	require.Equal(t, "", items[1].ID)
+}
+
+func TestChatReasoningDetailsRequest_InvalidIDOmitted(t *testing.T) {
+	long := "rs_" + strings.Repeat("a", 70)
+	items := convertChatBodyForTest(t, `{"messages":[{"role":"assistant","content":"x","reasoning_details":[
+		{"type":"reasoning.encrypted","data":"A","id":"rs_good"},
+		{"type":"reasoning.encrypted","data":"B","id":"msg_wrong_prefix"},
+		{"type":"reasoning.encrypted","data":"C","id":"`+long+`"}]}]}`)
+	require.Equal(t, "rs_good", items[0].ID)
+	require.Equal(t, "", items[1].ID)
+	require.Equal(t, "B", items[1].EncryptedContent)
+	require.Equal(t, "", items[2].ID)
+	require.Equal(t, "C", items[2].EncryptedContent)
+}

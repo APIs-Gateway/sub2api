@@ -901,7 +901,12 @@ type GatewayConfig struct {
 	// （OpenRouter 风格的 reasoning_details，type=reasoning.encrypted，data 为 encrypted_content 原文）。
 	// 客户端下一轮带回 assistant 消息上的 reasoning_details 时，网关把它还原成 Responses 的 reasoning 项（该方向不受本开关控制）。
 	// 默认关闭，关闭时响应字节与不支持本功能时完全一致。
+	// 开启后会对第三方 Responses 上游也请求 summary，仅在上游接受该字段时开启。
 	ChatCompletionsReasoningDetails bool `mapstructure:"chat_completions_reasoning_details"`
+	// ResponsesForceEncryptedReasoning 为 true 时，/v1/responses（Forward）发往上游的请求体里，
+	// 推理模型且 effort 不是 none 的请求会补 include "reasoning.encrypted_content"（强制档位之后判断），
+	// 让上游返回加密推理（signature）。WS v2、compact、图片模型不处理，不动 store 等其他字段。默认关闭，关闭时字节不变。
+	ResponsesForceEncryptedReasoning bool `mapstructure:"responses_force_encrypted_reasoning"`
 	// NoAutoUnschedAccountIDs：名单内账号「不自动暂停调度」——因上游失败自动产生的任何停调度/冷却
 	// （429、529、401/403 置错、临时不可调度规则、流超时、单模型限流、运行时冷却、传输错误隔离、
 	// 代理流隔离）都不影响它被选中；管理员手动停用、过期、配额耗尽等仍然生效。
@@ -2221,6 +2226,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.upstream_model_mismatch_observe_account_ids", []int64{})
 	viper.SetDefault("gateway.client_model_full_mapping", false)
 	viper.SetDefault("gateway.chat_completions_reasoning_details", false)
+	viper.SetDefault("gateway.responses_force_encrypted_reasoning", false)
 	viper.SetDefault("gateway.no_auto_unsched_account_ids", []int64{})
 	viper.SetDefault("gateway.model_downgrade_guard.enabled", false)
 	viper.SetDefault("gateway.model_downgrade_guard.threshold_count", 5)

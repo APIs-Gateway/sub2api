@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -250,8 +251,8 @@ func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	// 客户端带回的 reasoning_details（type=reasoning.encrypted）还原成 Responses reasoning 项，
 	// 排在本条 assistant 消息对应的所有 input 项之前。已有有效加密项时不再把
 	// reasoning_content 拼成 <thinking> 文本（避免同一段推理重复）；没有时保持原行为。
-	items = append(items, reasoningEncryptedInputItems(m.ReasoningDetails)...)
-	if m.ReasoningContent != "" && len(items) == 0 {
+	reasoningItems := reasoningEncryptedInputItems(m.ReasoningDetails)
+	if m.ReasoningContent != "" && len(reasoningItems) == 0 {
 		content = "<thinking>" + m.ReasoningContent + "</thinking>"
 	}
 
@@ -292,7 +293,19 @@ func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 		})
 	}
 
-	return items, nil
+	if len(reasoningItems) == 0 {
+		return items, nil
+	}
+	if len(items) == 0 {
+		// 除了 reasoning 项之外没有 message / function_call：孤立的 reasoning 项上游不接受，
+		// 在它后面补一条空的 assistant message 来保留密文（signature），不再拼 <thinking>。
+		items = append(items, ResponsesInputItem{
+			Type:    "message",
+			Role:    "assistant",
+			Content: json.RawMessage(`[{"type":"output_text","text":""}]`),
+		})
+	}
+	return append(reasoningItems, items...), nil
 }
 
 // parseAssistantContent returns assistant content as plain text.
@@ -618,18 +631,43 @@ func convertChatFunctionCallToToolChoice(raw json.RawMessage) (json.RawMessage, 
 
 // chatReasoningDetailIn 是请求方向宽松解析出的 reasoning_details 元素。
 type chatReasoningDetailIn struct {
-	pos     int
 	key     float64
-	Type    string   `json:"type"`
-	Data    string   `json:"data"`
-	ID      string   `json:"id"`
-	Format  string   `json:"format"`
-	Index   *float64 `json:"index"`
-	Summary string   `json:"summary"`
-	Text    string   `json:"text"`
+	Type    string
+	Data    string
+	ID      string
+	Format  string
+	Summary string
+	Text    string
 }
 
-// parseChatReasoningDetails 宽松解析 reasoning_details：不是数组、或元素无法解析（类型不符等）时跳过；
+// lenientString 取 JSON 字符串值；缺失或类型不对时按缺省（空串）处理。
+func lenientString(raw json.RawMessage) string {
+	var v string
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return ""
+	}
+	return v
+}
+
+// lenientIndex 接受 JSON 数字或数字字符串；其他一律视为缺省。
+func lenientIndex(raw json.RawMessage) (float64, bool) {
+	var n float64
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return n, true
+	}
+	var str string
+	if err := json.Unmarshal(raw, &str); err != nil {
+		return 0, false
+	}
+	n, err := strconv.ParseFloat(strings.TrimSpace(str), 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// parseChatReasoningDetails 宽松解析 reasoning_details：不是数组、或元素不是对象、或 type/data 不是字符串时跳过该元素；
+// summary / text / id / format / index 类型不对时当作缺省，元素本身保留。
 // 结果按 index 排序（缺 index 的按其在数组中的位置），相同时保持数组顺序。
 func parseChatReasoningDetails(raw json.RawMessage) []chatReasoningDetailIn {
 	if len(raw) == 0 {
@@ -641,14 +679,28 @@ func parseChatReasoningDetails(raw json.RawMessage) []chatReasoningDetailIn {
 	}
 	var out []chatReasoningDetailIn
 	for pos, elem := range elems {
-		var d chatReasoningDetailIn
-		if err := json.Unmarshal(elem, &d); err != nil {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(elem, &fields); err != nil {
 			continue
 		}
-		d.pos = pos
+		var d chatReasoningDetailIn
+		if v, ok := fields["type"]; ok {
+			if err := json.Unmarshal(v, &d.Type); err != nil {
+				continue
+			}
+		}
+		if v, ok := fields["data"]; ok {
+			if err := json.Unmarshal(v, &d.Data); err != nil {
+				continue
+			}
+		}
+		d.ID = lenientString(fields["id"])
+		d.Format = lenientString(fields["format"])
+		d.Summary = lenientString(fields["summary"])
+		d.Text = lenientString(fields["text"])
 		d.key = float64(pos)
-		if d.Index != nil {
-			d.key = *d.Index
+		if idx, ok := lenientIndex(fields["index"]); ok {
+			d.key = idx
 		}
 		out = append(out, d)
 	}
@@ -668,14 +720,25 @@ func reasoningEncryptedInputItems(raw json.RawMessage) []ResponsesInputItem {
 		if d.Format != "" && d.Format != ChatReasoningDetailFormatResponsesV1 {
 			continue
 		}
+		id := d.ID
+		if !validReasoningInputItemID(id) {
+			// 上游对 input item id 有格式要求，不合规的 id 会整包 400；省略 id，密文项照样保留。
+			id = ""
+		}
 		out = append(out, ResponsesInputItem{
 			Type:             "reasoning",
-			ID:               d.ID,
+			ID:               id,
 			Summary:          json.RawMessage("[]"),
 			EncryptedContent: d.Data,
 		})
 	}
 	return out
+}
+
+// validReasoningInputItemID 与 service.shouldStripOpenAIResponsesInputItemID 对 reasoning 项的口径一致：
+// 前缀 "rs"、长度不超过 64。
+func validReasoningInputItemID(id string) bool {
+	return len(id) <= 64 && strings.HasPrefix(id, "rs")
 }
 
 // reasoningDetailsPlainText 取 reasoning_details 里 reasoning.summary / reasoning.text 元素的文本，按顺序用空行连接。
