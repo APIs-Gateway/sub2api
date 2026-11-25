@@ -77,11 +77,23 @@ func TestApplyOpenAIForcedReasoningEffort_Helper(t *testing.T) {
 		{"minimal_to_high", forcedEffortAccount("high"), base + `,"reasoning":{"effort":"minimal"}}`, true, "high", false},
 		{"configured_xhigh_applies", forcedEffortAccount("XHigh"), base + `,"reasoning":{"effort":"none"}}`, true, "xhigh", false},
 		{"reasoning_null", forcedEffortAccount("high"), base + `,"reasoning":null}`, true, "high", false},
-		{"low_kept", forcedEffortAccount("high"), base + `,"reasoning":{"effort":"low"}}`, false, "low", true},
-		{"medium_kept", forcedEffortAccount("high"), base + `,"reasoning":{"effort":"medium"}}`, false, "medium", true},
-		{"high_kept", forcedEffortAccount("xhigh"), base + `,"reasoning":{"effort":"high"}}`, false, "high", true},
+		// 下限语义：低于配置值的一律提升，高于或等于的不动。
+		{"low_raised_to_high", forcedEffortAccount("high"), base + `,"reasoning":{"effort":"low"}}`, true, "high", false},
+		{"medium_raised_to_high", forcedEffortAccount("high"), base + `,"reasoning":{"effort":"medium"}}`, true, "high", false},
+		{"high_raised_to_xhigh", forcedEffortAccount("xhigh"), base + `,"reasoning":{"effort":"high"}}`, true, "xhigh", false},
+		{"xhigh_raised_to_max", forcedEffortAccount("max"), base + `,"reasoning":{"effort":"xhigh"}}`, true, "max", false},
+		{"upper_case_effort_raised", forcedEffortAccount("high"), base + `,"reasoning":{"effort":"  MEDIUM "}}`, true, "high", false},
+		{"low_raised_to_medium", forcedEffortAccount("medium"), base + `,"reasoning":{"effort":"low"}}`, true, "medium", false},
+		{"high_equal_kept", forcedEffortAccount("high"), base + `,"reasoning":{"effort":"high"}}`, false, "high", true},
 		{"xhigh_kept", forcedEffortAccount("high"), base + `,"reasoning":{"effort":"xhigh"}}`, false, "xhigh", true},
 		{"max_kept", forcedEffortAccount("high"), base + `,"reasoning":{"effort":"max"}}`, false, "max", true},
+		{"max_kept_with_xhigh_config", forcedEffortAccount("xhigh"), base + `,"reasoning":{"effort":"max"}}`, false, "max", true},
+		{"unknown_value_kept", forcedEffortAccount("high"), base + `,"reasoning":{"effort":"ultra"}}`, false, "ultra", true},
+		{"config_low_keeps_medium", forcedEffortAccount("low"), base + `,"reasoning":{"effort":"medium"}}`, false, "medium", true},
+		{"config_low_keeps_low", forcedEffortAccount("low"), base + `,"reasoning":{"effort":"low"}}`, false, "low", true},
+		{"config_low_none_to_low", forcedEffortAccount("low"), base + `,"reasoning":{"effort":"none"}}`, true, "low", false},
+		{"config_low_minimal_to_low", forcedEffortAccount("low"), base + `,"reasoning":{"effort":"minimal"}}`, true, "low", false},
+		{"config_low_missing_to_low", forcedEffortAccount("low"), base + `}`, true, "low", false},
 		{"unconfigured_missing", forcedEffortAccount(nil), base + `}`, false, "", true},
 		{"unconfigured_none", forcedEffortAccount(nil), base + `,"reasoning":{"effort":"none"}}`, false, "none", true},
 		{"invalid_config_unchanged", forcedEffortAccount("turbo"), base + `,"reasoning":{"effort":"none"}}`, false, "none", true},
@@ -230,9 +242,27 @@ func TestForcedReasoningEffort_Forward(t *testing.T) {
 		upstream, _ := runForcedEffortForward(t, forcedEffortAccount("high"), forcedEffortResponsesBodyMinimal)
 		require.Equal(t, "high", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
 	})
-	t.Run("low_is_kept", func(t *testing.T) {
-		upstream, _ := runForcedEffortForward(t, forcedEffortAccount("high"), forcedEffortResponsesBodyLow)
-		require.Equal(t, "low", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+	t.Run("low_raised_to_high", func(t *testing.T) {
+		upstream, result := runForcedEffortForward(t, forcedEffortAccount("high"), forcedEffortResponsesBodyLow)
+		require.Equal(t, "high", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+		require.NotNil(t, result.ReasoningEffort)
+		require.Equal(t, "high", *result.ReasoningEffort)
+	})
+	t.Run("medium_raised_to_high", func(t *testing.T) {
+		upstream, _ := runForcedEffortForward(t, forcedEffortAccount("high"), strings.Replace(forcedEffortResponsesBodyLow, `"low"`, `"medium"`, 1))
+		require.Equal(t, "high", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+	})
+	t.Run("xhigh_and_max_kept", func(t *testing.T) {
+		for _, effort := range []string{"xhigh", "max"} {
+			upstream, result := runForcedEffortForward(t, forcedEffortAccount("high"), strings.Replace(forcedEffortResponsesBodyLow, `"low"`, `"`+effort+`"`, 1))
+			require.Equal(t, effort, gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+			require.NotNil(t, result.ReasoningEffort)
+			require.Equal(t, effort, *result.ReasoningEffort)
+		}
+	})
+	t.Run("config_low_keeps_medium", func(t *testing.T) {
+		upstream, _ := runForcedEffortForward(t, forcedEffortAccount("low"), strings.Replace(forcedEffortResponsesBodyLow, `"low"`, `"medium"`, 1))
+		require.Equal(t, "medium", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
 	})
 	t.Run("none_with_temperature_drops_sampling", func(t *testing.T) {
 		body := `{"model":"gpt-6-luna","stream":true,"temperature":0.7,"top_p":0.9,"reasoning":{"effort":"none"},"input":"hi"}`
@@ -272,6 +302,25 @@ func TestForcedReasoningEffort_ChatCompletions(t *testing.T) {
 		require.NotNil(t, result.ReasoningEffort)
 		require.Equal(t, "high", *result.ReasoningEffort)
 	})
+	t.Run("low_raised_to_high", func(t *testing.T) {
+		body := `{"model":"gpt-6-luna","stream":false,"reasoning_effort":"low","messages":[{"role":"user","content":"hello"}]}`
+		upstream, result := runForcedEffortChat(t, forcedEffortAccount("high"), body)
+		require.Equal(t, "high", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+		require.NotNil(t, result.ReasoningEffort)
+		require.Equal(t, "high", *result.ReasoningEffort)
+	})
+	t.Run("xhigh_kept", func(t *testing.T) {
+		body := `{"model":"gpt-6-luna","stream":false,"reasoning_effort":"xhigh","messages":[{"role":"user","content":"hello"}]}`
+		upstream, result := runForcedEffortChat(t, forcedEffortAccount("high"), body)
+		require.Equal(t, "xhigh", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+		require.NotNil(t, result.ReasoningEffort)
+		require.Equal(t, "xhigh", *result.ReasoningEffort)
+	})
+	t.Run("config_low_keeps_medium", func(t *testing.T) {
+		body := `{"model":"gpt-6-luna","stream":false,"reasoning_effort":"medium","messages":[{"role":"user","content":"hello"}]}`
+		upstream, _ := runForcedEffortChat(t, forcedEffortAccount("low"), body)
+		require.Equal(t, "medium", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+	})
 	t.Run("unconfigured_none_keeps_none_and_sampling", func(t *testing.T) {
 		upstream, _ := runForcedEffortChat(t, forcedEffortAccount(nil), noneWithTemp)
 		require.Equal(t, "none", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
@@ -287,9 +336,15 @@ func TestForcedReasoningEffort_Messages(t *testing.T) {
 	const noThinking = `{"model":"gpt-6-luna","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hello"}]}`
 	const thinkingDisabled = `{"model":"gpt-6-luna","max_tokens":64,"stream":true,"thinking":{"type":"disabled"},"messages":[{"role":"user","content":"hello"}]}`
 
-	t.Run("no_thinking_keeps_converter_default", func(t *testing.T) {
-		// Anthropic 请求没开 thinking 时转换器本身就给 medium，属于有效档位，按约定不动。
+	t.Run("no_thinking_converter_medium_raised_to_high", func(t *testing.T) {
+		// Anthropic 请求没开 thinking 时转换器默认给 medium，下限语义下配置 high 会把它提到 high。
 		upstream, result := runForcedEffortMessages(t, forcedEffortAccount("high"), noThinking)
+		require.Equal(t, "high", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+		require.NotNil(t, result.ReasoningEffort)
+		require.Equal(t, "high", *result.ReasoningEffort)
+	})
+	t.Run("config_low_keeps_converter_medium", func(t *testing.T) {
+		upstream, result := runForcedEffortMessages(t, forcedEffortAccount("low"), noThinking)
 		require.Equal(t, "medium", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
 		require.NotNil(t, result.ReasoningEffort)
 		require.Equal(t, "medium", *result.ReasoningEffort)
