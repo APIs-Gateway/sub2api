@@ -817,6 +817,10 @@ func TestAPIContracts(t *testing.T) {
 					"affiliate_weekly_invite_limit": 0,
 					"affiliate_signup_reward_enabled": false,
 					"affiliate_signup_reward_amount": 0,
+					"affiliate_signup_reward_min_spend": 0,
+					"affiliate_signup_reward_min_spend_since": "",
+					"credit_currency": "USD",
+					"credit_legacy_divisor": 1,
 					"affiliate_code_admits_signup": false,
 					"signup_source_enabled": {
 						"email": true,
@@ -1102,6 +1106,10 @@ func TestAPIContracts(t *testing.T) {
 					"affiliate_weekly_invite_limit": 0,
 					"affiliate_signup_reward_enabled": false,
 					"affiliate_signup_reward_amount": 0,
+					"affiliate_signup_reward_min_spend": 0,
+					"affiliate_signup_reward_min_spend_since": "",
+					"credit_currency": "USD",
+					"credit_legacy_divisor": 1,
 					"affiliate_code_admits_signup": false,
 					"signup_source_enabled": {
 						"email": true,

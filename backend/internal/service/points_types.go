@@ -147,6 +147,22 @@ type SignupRewardInput struct {
 	PegAt        float64
 }
 
+// SignupRewardCandidate 是一个「已绑定邀请人、注册奖励还没发」的被邀请人。
+// 只在「被邀请人累计消费达标后才发」模式下由后台扫描使用。
+type SignupRewardCandidate struct {
+	InviteeID int64
+	InviterID int64
+}
+
+// UsageCostSum 是某个用户在 usage_logs 里一种记账单位下的累计实际消费（actual_cost 原值之和）。
+// 同一个用户可能有两行：额度（cost_unit 为 NULL）与人民币（cost_unit=1），换算由 service 层按
+// CreditUnit 统一处理，仓储层不做任何单位换算。
+type UsageCostSum struct {
+	UserID      int64
+	CostUnitCNY bool
+	ActualCost  float64
+}
+
 // CreateWithdrawalInput 创建一张提现单（金额由 service 用纯函数预算好）。
 type CreateWithdrawalInput struct {
 	UserID              int64
@@ -191,6 +207,13 @@ type PointsRepository interface {
 	// GrantSignupReward 幂等发放邀请注册奖励（partial-unique on (source_user_id) WHERE kind='signup_reward'）。
 	// 返回是否真正入账；重复调用只会命中唯一索引并返回 false。
 	GrantSignupReward(ctx context.Context, in SignupRewardInput) (bool, error)
+	// ListSignupRewardCandidates 按被邀请人 ID 升序（keyset 分页，id > afterInviteeID）列出
+	// 「users.created_at >= since、已绑定邀请人、被邀请人和邀请人都未软删且状态正常、
+	// 还没有 signup_reward 流水」的被邀请人，最多 limit 个。带语句超时。
+	ListSignupRewardCandidates(ctx context.Context, since time.Time, afterInviteeID int64, limit int) ([]SignupRewardCandidate, error)
+	// SumUsageActualCost 批量返回这些用户在 usage_logs 里 actual_cost 的累计和，按 cost_unit 分开
+	// （额度 / 人民币各一行，没有用量的用户不出现）。只读、不加锁、带语句超时。
+	SumUsageActualCost(ctx context.Context, userIDs []int64) ([]UsageCostSum, error)
 	// ClawbackByOrder 退款撤回积分：读该单 earn 流水取 earned，floor 比例撤、可转负、一单一撤幂等。返回撤回积分数。
 	ClawbackByOrder(ctx context.Context, sourceOrderID int64, refundAmount, originalAmount float64) (int64, error)
 	// ThawDuePoints 到期冻结积分 → 可用，返回解冻数。

@@ -80,6 +80,7 @@
             <template v-else>
               {{ t('points.invite.rewardDisabled') }}
             </template>
+            <p v-if="signupRewardText" class="mt-2">{{ signupRewardText }}</p>
           </div>
         </div>
 
@@ -311,6 +312,17 @@ const peg = computed(() => overview.value?.config.peg ?? 0)
 const balanceRedeemRate = computed(() => overview.value?.config.balance_redeem_rate ?? 1)
 const repeatPaymentRate = computed(() => overview.value?.effective_rate ?? 0)
 const firstPaymentRate = computed(() => repeatPaymentRate.value * 2)
+// 邀请注册奖励只在设了消费门槛（>0）时单独说明；门槛为 0 沿用原来的展示，不多出一行。
+const signupRewardText = computed(() => {
+  const cfg = overview.value?.config
+  const amount = cfg?.signup_reward_amount ?? 0
+  const minSpend = cfg?.signup_reward_min_spend ?? 0
+  if (!cfg?.signup_reward_enabled || amount <= 0 || minSpend <= 0) return ''
+  return t('points.invite.signupRewardAfterSpend', {
+    spend: formatWallet(minSpend),
+    points: formatCount(amount),
+  })
+})
 const inviteExampleAmount = 100
 const inviteRepeatExamplePoints = computed(() => computeEarnPoints(inviteExampleAmount, repeatPaymentRate.value, peg.value))
 const inviteFirstExamplePoints = computed(() => computeEarnPoints(inviteExampleAmount, firstPaymentRate.value, peg.value))

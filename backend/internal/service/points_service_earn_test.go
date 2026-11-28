@@ -7,7 +7,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -153,6 +155,79 @@ type pointsEarnRepo struct {
 	signupCalls []SignupRewardInput
 	signupSeen  map[int64]bool
 	signupErr   error
+
+	// 「被邀请人消费达标后发注册奖励」的后台扫描用：待判定名单与各被邀请人的累计实际消费。
+	sweepCandidates []SignupRewardCandidate
+	sweepSums       []UsageCostSum
+	sweepListErr    error
+	sweepSumErr     error          // 对所有求和调用都报错
+	sweepSumFailIDs map[int64]bool // 调用里只要含有其中任何一个 ID 就报错（模拟某个人的数据让整批查询超时）
+	sweepListBlock  bool           // 名单查询一直阻塞到 ctx 结束（模拟关停时卡在数据库里）
+	sweepListPanic  bool
+	sweepListCalls  int
+	sweepSumCalls   int
+	sweepLastSince  time.Time
+	sweepMu         sync.Mutex // 后台循环的测试里 runOnce 在另一个 goroutine 上调用 fake
+}
+
+func (r *pointsEarnRepo) listCalled() bool { return r.listCalls() > 0 }
+
+func (r *pointsEarnRepo) listCalls() int {
+	r.sweepMu.Lock()
+	defer r.sweepMu.Unlock()
+	return r.sweepListCalls
+}
+
+// ListSignupRewardCandidates 与真实仓储同口径：按被邀请人 ID 升序、id > 游标、排除已发过奖励的。
+// since / 邀请人是否有效这类 SQL 条件由仓储集成测试覆盖，这里只记录传进来的 since。
+func (r *pointsEarnRepo) ListSignupRewardCandidates(ctx context.Context, since time.Time, after int64, limit int) ([]SignupRewardCandidate, error) {
+	r.sweepMu.Lock()
+	r.sweepListCalls++
+	r.sweepLastSince = since
+	r.sweepMu.Unlock()
+	if r.sweepListPanic {
+		panic("boom in list")
+	}
+	if r.sweepListBlock {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if r.sweepListErr != nil {
+		return nil, r.sweepListErr
+	}
+	var out []SignupRewardCandidate
+	for _, c := range r.sweepCandidates {
+		if c.InviteeID <= after || r.signupSeen[c.InviteeID] {
+			continue
+		}
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].InviteeID < out[j].InviteeID })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (r *pointsEarnRepo) SumUsageActualCost(_ context.Context, ids []int64) ([]UsageCostSum, error) {
+	r.sweepSumCalls++
+	if r.sweepSumErr != nil {
+		return nil, r.sweepSumErr
+	}
+	in := map[int64]bool{}
+	for _, id := range ids {
+		if r.sweepSumFailIDs[id] {
+			return nil, errors.New("statement timeout")
+		}
+		in[id] = true
+	}
+	var out []UsageCostSum
+	for _, sum := range r.sweepSums {
+		if in[sum.UserID] {
+			out = append(out, sum)
+		}
+	}
+	return out, nil
 }
 
 // GrantSignupReward 模拟 (source_user_id) WHERE kind='signup_reward' 的 partial-unique：

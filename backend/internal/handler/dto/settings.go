@@ -150,18 +150,25 @@ type SystemSettings struct {
 	CustomMenuItems             []CustomMenuItem `json:"custom_menu_items"`
 	CustomEndpoints             []CustomEndpoint `json:"custom_endpoints"`
 
-	DefaultConcurrency           int                          `json:"default_concurrency"`
-	DefaultBalance               float64                      `json:"default_balance"`
-	AffiliateRebateRate          float64                      `json:"affiliate_rebate_rate"`
-	AffiliateRebateFreezeHours   int                          `json:"affiliate_rebate_freeze_hours"`
-	AffiliateRebateDurationDays  int                          `json:"affiliate_rebate_duration_days"`
-	AffiliateRebatePerInviteeCap float64                      `json:"affiliate_rebate_per_invitee_cap"`
-	AffiliateWeeklyInviteLimit   int                          `json:"affiliate_weekly_invite_limit"`
-	AffiliateSignupRewardEnabled bool                         `json:"affiliate_signup_reward_enabled"`
-	AffiliateSignupRewardAmount  int64                        `json:"affiliate_signup_reward_amount"`
-	AffiliateCodeAdmitsSignup    bool                         `json:"affiliate_code_admits_signup"`
-	DefaultUserRPMLimit          int                          `json:"default_user_rpm_limit"`
-	DefaultSubscriptions         []DefaultSubscriptionSetting `json:"default_subscriptions"`
+	DefaultConcurrency                 int     `json:"default_concurrency"`
+	DefaultBalance                     float64 `json:"default_balance"`
+	AffiliateRebateRate                float64 `json:"affiliate_rebate_rate"`
+	AffiliateRebateFreezeHours         int     `json:"affiliate_rebate_freeze_hours"`
+	AffiliateRebateDurationDays        int     `json:"affiliate_rebate_duration_days"`
+	AffiliateRebatePerInviteeCap       float64 `json:"affiliate_rebate_per_invitee_cap"`
+	AffiliateWeeklyInviteLimit         int     `json:"affiliate_weekly_invite_limit"`
+	AffiliateSignupRewardEnabled       bool    `json:"affiliate_signup_reward_enabled"`
+	AffiliateSignupRewardAmount        int64   `json:"affiliate_signup_reward_amount"`
+	AffiliateSignupRewardMinSpend      float64 `json:"affiliate_signup_reward_min_spend"`
+	AffiliateSignupRewardMinSpendSince string  `json:"affiliate_signup_reward_min_spend_since"`
+	// CreditCurrency 是站点当前的记账单位（USD / CNY），只读，管理端用来决定金额类设置显示 $ 还是 ¥。
+	CreditCurrency string `json:"credit_currency"`
+	// CreditLegacyDivisor 是历史额度换人民币的除数（codex 站 13，free 站 1），只读。
+	// 额度模式（CreditCurrency=USD）且除数 != 1 时，管理端金额类设置的单位是「额度」而不是美元。
+	CreditLegacyDivisor       int64                        `json:"credit_legacy_divisor"`
+	AffiliateCodeAdmitsSignup bool                         `json:"affiliate_code_admits_signup"`
+	DefaultUserRPMLimit       int                          `json:"default_user_rpm_limit"`
+	DefaultSubscriptions      []DefaultSubscriptionSetting `json:"default_subscriptions"`
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`

@@ -39,6 +39,9 @@ const (
 
 	AffiliateSignupRewardAmountDefault = 0      // 0 = 不发放注册奖励
 	AffiliateSignupRewardAmountMax     = 100000 // 防止误填成天文数字，凭空发出巨量积分
+
+	AffiliateSignupRewardMinSpendDefault = 0.0     // 0 = 注册绑定成功即发（原行为）
+	AffiliateSignupRewardMinSpendMax     = 1000000 // 防止误填成天文数字
 )
 
 // Points（邀请返利积分制，issue #11）settings 默认值
@@ -186,9 +189,13 @@ const (
 	SettingKeyAffiliateRebatePerInviteeCap     = "affiliate_rebate_per_invitee_cap"    // 单人返利上限（0=无上限）
 	SettingKeyAffiliateWeeklyInviteLimit       = "affiliate_weekly_invite_limit"       // 邀请码每自然周可成功邀请的人数上限（0=不限；管理员不受限）
 	SettingKeyAffiliateSignupRewardEnabled     = "affiliate_signup_reward_enabled"     // 邀请注册即得积分开关（被邀请人无需付费）
-	SettingKeyAffiliateSignupRewardAmount      = "affiliate_signup_reward_amount"      // 每成功邀请一人，邀请人立即获得的积分数
-	SettingKeyAffiliateCodeAdmitsSignup        = "affiliate_code_admits_signup"        // 开启后，填了有效的邀请人邀请码即可放行注册，不再另需一张注册码
-	SettingKeyGitHubOAuthMinAccountAgeDays     = "github_oauth_min_account_age_days"   // GitHub 注册要求的 GitHub 账号最短注册天数（0=不限；只管新注册，不影响已有用户登录/绑定）
+	SettingKeyAffiliateSignupRewardAmount      = "affiliate_signup_reward_amount"      // 每成功邀请一人，邀请人获得的积分数
+	SettingKeyAffiliateSignupRewardMinSpend    = "affiliate_signup_reward_min_spend"   // 被邀请人累计实际消费达到该值后才给邀请人发注册奖励（站点当前计费单位，0=注册即发）
+	// SettingKeyAffiliateSignupRewardMinSpendSince 是「按消费门槛发放」的生效起点（RFC3339 UTC，空=不扫描）：
+	// 只有 users.created_at >= 该时刻的被邀请人才会被扫描发放，历史邀请关系不会因为开了门槛而被补发。
+	SettingKeyAffiliateSignupRewardMinSpendSince = "affiliate_signup_reward_min_spend_since"
+	SettingKeyAffiliateCodeAdmitsSignup          = "affiliate_code_admits_signup"      // 开启后，填了有效的邀请人邀请码即可放行注册，不再另需一张注册码
+	SettingKeyGitHubOAuthMinAccountAgeDays       = "github_oauth_min_account_age_days" // GitHub 注册要求的 GitHub 账号最短注册天数（0=不限；只管新注册，不影响已有用户登录/绑定）
 
 	// 分渠道注册开关：auth_source_<source>_signup_enabled
 	// <source> 取值与 normalizeOAuthSignupSource 一致，其中 email 代表账号密码注册。

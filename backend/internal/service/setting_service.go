@@ -2118,6 +2118,15 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		settings.AffiliateSignupRewardAmount = AffiliateSignupRewardAmountMax
 	}
 	updates[SettingKeyAffiliateSignupRewardAmount] = strconv.FormatInt(settings.AffiliateSignupRewardAmount, 10)
+	if settings.AffiliateSignupRewardMinSpend < 0 || math.IsNaN(settings.AffiliateSignupRewardMinSpend) || math.IsInf(settings.AffiliateSignupRewardMinSpend, 0) {
+		settings.AffiliateSignupRewardMinSpend = AffiliateSignupRewardMinSpendDefault
+	}
+	if settings.AffiliateSignupRewardMinSpend > AffiliateSignupRewardMinSpendMax {
+		settings.AffiliateSignupRewardMinSpend = AffiliateSignupRewardMinSpendMax
+	}
+	updates[SettingKeyAffiliateSignupRewardMinSpend] = strconv.FormatFloat(settings.AffiliateSignupRewardMinSpend, 'f', 8, 64)
+	// 生效起点统一规整成 UTC 的 RFC3339；空串合法（= 不扫描）；写不出合法时间的当作空，宁可不扫也不乱扫。
+	updates[SettingKeyAffiliateSignupRewardMinSpendSince] = normalizeSignupRewardSince(settings.AffiliateSignupRewardMinSpendSince)
 	updates[SettingKeyAffiliateCodeAdmitsSignup] = strconv.FormatBool(settings.AffiliateCodeAdmitsSignup)
 	// 分渠道注册开关：只写入本次显式给出的来源，未出现在 map 里的保持原值，
 	// 这样老版本前端提交完整设置时不会把新开关意外重置掉。
@@ -2909,6 +2918,77 @@ func (s *SettingService) GetAffiliateSignupRewardAmount(ctx context.Context) int
 	return amount
 }
 
+// GetAffiliateSignupRewardMinSpend 返回被邀请人累计实际消费达到多少后才给邀请人发注册奖励
+// （站点当前计费单位）。
+//
+// 只有「键不存在 / 值为空」才算 0（= 注册绑定即发）。读库出错、值解析不出来、为负、NaN/Inf
+// 都返回 error：调用方必须据此不发——一次数据库抖动绝不能把「消费满才发」悄悄退回成「注册即发」。
+func (s *SettingService) GetAffiliateSignupRewardMinSpend(ctx context.Context) (float64, error) {
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateSignupRewardMinSpend)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return AffiliateSignupRewardMinSpendDefault, nil
+		}
+		return 0, fmt.Errorf("read %s: %w", SettingKeyAffiliateSignupRewardMinSpend, err)
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return AffiliateSignupRewardMinSpendDefault, nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, fmt.Errorf("invalid %s value %q", SettingKeyAffiliateSignupRewardMinSpend, raw)
+	}
+	if v > AffiliateSignupRewardMinSpendMax {
+		return AffiliateSignupRewardMinSpendMax, nil
+	}
+	return v, nil
+}
+
+// GetAffiliateSignupRewardMinSpendSince 返回门槛模式的生效起点。零值 Time = 未设置（扫描不工作）。
+// 读库出错或格式不合法返回 error，调用方同样按「不发」处理。
+func (s *SettingService) GetAffiliateSignupRewardMinSpendSince(ctx context.Context) (time.Time, error) {
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateSignupRewardMinSpendSince)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return time.Time{}, nil
+		}
+		return time.Time{}, fmt.Errorf("read %s: %w", SettingKeyAffiliateSignupRewardMinSpendSince, err)
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid %s value %q: %w", SettingKeyAffiliateSignupRewardMinSpendSince, raw, err)
+	}
+	return t.UTC(), nil
+}
+
+// normalizeSignupRewardSince 把生效起点规整成 UTC 的 RFC3339；空或不合法返回空串。
+func normalizeSignupRewardSince(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+// NormalizeSignupRewardSince 给管理端 handler 用：返回规整后的值，以及原值是否合法（空串合法）。
+func NormalizeSignupRewardSince(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", true
+	}
+	out := normalizeSignupRewardSince(trimmed)
+	return out, out != ""
+}
+
 // parseSignupSourceEnabled 从一批原始设置里读出各注册来源的开关。
 // 缺省（键不存在或值为空）一律视为允许，与 IsSignupSourceEnabled 的判定保持一致，
 // 保证「读出来展示的状态」和「实际放行的行为」不会出现分歧。
@@ -3250,6 +3330,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAffiliateWeeklyInviteLimit:                strconv.Itoa(AffiliateWeeklyInviteLimitDefault),
 		SettingKeyAffiliateSignupRewardEnabled:              "false",
 		SettingKeyAffiliateSignupRewardAmount:               strconv.FormatInt(AffiliateSignupRewardAmountDefault, 10),
+		SettingKeyAffiliateSignupRewardMinSpend:             strconv.FormatFloat(AffiliateSignupRewardMinSpendDefault, 'f', 8, 64),
+		SettingKeyAffiliateSignupRewardMinSpendSince:        "",
 		SettingKeyAffiliateCodeAdmitsSignup:                 "false",
 		SettingKeyDefaultUserRPMLimit:                       "0",
 		SettingKeyDefaultSubscriptions:                      "[]",
@@ -3493,6 +3575,13 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		}
 		result.AffiliateSignupRewardAmount = amount
 	}
+	if minSpend, err := strconv.ParseFloat(strings.TrimSpace(settings[SettingKeyAffiliateSignupRewardMinSpend]), 64); err == nil && minSpend >= 0 && !math.IsNaN(minSpend) && !math.IsInf(minSpend, 0) {
+		if minSpend > AffiliateSignupRewardMinSpendMax {
+			minSpend = AffiliateSignupRewardMinSpendMax
+		}
+		result.AffiliateSignupRewardMinSpend = minSpend
+	}
+	result.AffiliateSignupRewardMinSpendSince = strings.TrimSpace(settings[SettingKeyAffiliateSignupRewardMinSpendSince])
 	result.DefaultSubscriptions = parseDefaultSubscriptions(settings[SettingKeyDefaultSubscriptions])
 
 	// 敏感信息直接返回，方便测试连接时使用

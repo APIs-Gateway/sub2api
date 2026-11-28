@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -44,6 +45,15 @@ func (r *fakeAdminPtsRepo) GetAccount(ctx context.Context, userID int64) (*servi
 // 返回「未入账」即可——万一将来被意外调用到，也不会因为这里的零值把断言误判成成功。
 func (r *fakeAdminPtsRepo) GrantSignupReward(context.Context, service.SignupRewardInput) (bool, error) {
 	return false, nil
+}
+
+// 下面两个只服务于「被邀请人消费达标后发注册奖励」的后台扫描，本组用例不走那条路径。
+func (r *fakeAdminPtsRepo) ListSignupRewardCandidates(context.Context, time.Time, int64, int) ([]service.SignupRewardCandidate, error) {
+	return nil, nil
+}
+
+func (r *fakeAdminPtsRepo) SumUsageActualCost(context.Context, []int64) ([]service.UsageCostSum, error) {
+	return nil, nil
 }
 
 func (r *fakeAdminPtsRepo) EarnPoints(ctx context.Context, in service.EarnPointsInput) (bool, error) {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -71,6 +72,15 @@ func (r *fakePointsRepo) GetAccount(ctx context.Context, userID int64) (*PointsA
 // 返回「未入账」即可——万一将来被意外调用到，也不会因为这里的零值把断言误判成成功。
 func (r *fakePointsRepo) GrantSignupReward(context.Context, SignupRewardInput) (bool, error) {
 	return false, nil
+}
+
+// 下面两个只服务于「被邀请人消费达标后发注册奖励」的后台扫描，本组用例不走那条路径。
+func (r *fakePointsRepo) ListSignupRewardCandidates(context.Context, time.Time, int64, int) ([]SignupRewardCandidate, error) {
+	return nil, nil
+}
+
+func (r *fakePointsRepo) SumUsageActualCost(context.Context, []int64) ([]UsageCostSum, error) {
+	return nil, nil
 }
 
 func (r *fakePointsRepo) EarnPoints(ctx context.Context, in EarnPointsInput) (bool, error) {

@@ -6388,6 +6388,53 @@
                 </p>
               </div>
 
+              <div v-if="form.affiliate_signup_reward_enabled">
+                <label class="input-label">
+                  {{ t('admin.settings.features.affiliate.signupRewardMinSpend') }}
+                </label>
+                <div class="relative">
+                  <span
+                    v-if="!creditIsQuotaUnit"
+                    class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                  >{{ creditCurrencySymbol }}</span>
+                  <input
+                    v-model.number="form.affiliate_signup_reward_min_spend"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="1000000"
+                    :class="creditIsQuotaUnit ? 'input pr-14' : 'input pl-7'"
+                  />
+                  <span
+                    v-if="creditIsQuotaUnit"
+                    class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
+                  >{{ t('admin.settings.features.affiliate.creditQuotaUnit') }}</span>
+                </div>
+                <p class="mt-1 whitespace-pre-line text-xs text-gray-400">
+                  {{ t('admin.settings.features.affiliate.signupRewardMinSpendDesc', {
+                    currency: creditIsQuotaUnit ? t('admin.settings.features.affiliate.creditQuotaUnit') : creditCurrencySymbol,
+                  }) }}
+                </p>
+                <p v-if="creditIsQuotaUnit" class="mt-1 text-xs text-gray-400">
+                  {{ t('admin.settings.features.affiliate.creditQuotaRate', { divisor: creditLegacyDivisor }) }}
+                </p>
+              </div>
+
+              <div v-if="form.affiliate_signup_reward_enabled && Number(form.affiliate_signup_reward_min_spend) > 0">
+                <label class="input-label">
+                  {{ t('admin.settings.features.affiliate.signupRewardMinSpendSince') }}
+                </label>
+                <input
+                  v-model.trim="form.affiliate_signup_reward_min_spend_since"
+                  type="text"
+                  class="input font-mono"
+                  placeholder="2026-11-28T14:01:00Z"
+                />
+                <p class="mt-1 text-xs text-gray-400">
+                  {{ t('admin.settings.features.affiliate.signupRewardMinSpendSinceDesc') }}
+                </p>
+              </div>
+
               <div class="flex items-center justify-between">
                 <div>
                   <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -8776,6 +8823,16 @@ function setSignupSourceEnabled(source: string, enabled: boolean) {
   form.signup_source_enabled[source] = enabled;
 }
 
+// 金额类设置跟随站点当前记账单位显示：人民币站 ¥，其余 $。
+// 额度模式：记账单位是历史额度（CREDIT_CURRENCY=USD）且 ¥1 ≠ 1 额度（除数 != 1，如 codex 站 13），
+// 此时金额类设置的单位是「额度」而不是美元；除数为 1 的站（free）额度就是美元。
+const creditLegacyDivisor = computed(() => {
+  const d = Number(form.credit_legacy_divisor);
+  return Number.isFinite(d) && d > 0 ? d : 1;
+});
+const creditIsQuotaUnit = computed(() => form.credit_currency !== "CNY" && creditLegacyDivisor.value !== 1);
+const creditCurrencySymbol = computed(() => (form.credit_currency === "CNY" ? "¥" : "$"));
+
 const form = reactive<SettingsForm>({
   registration_enabled: true,
   signup_source_enabled: defaultSignupSourceEnabled(),
@@ -8802,6 +8859,10 @@ const form = reactive<SettingsForm>({
   affiliate_weekly_invite_limit: 0,
   affiliate_signup_reward_enabled: false,
   affiliate_signup_reward_amount: 0,
+  affiliate_signup_reward_min_spend: 0,
+  affiliate_signup_reward_min_spend_since: "",
+  credit_currency: "USD",
+  credit_legacy_divisor: 1,
   affiliate_code_admits_signup: false,
   default_concurrency: 1,
   default_subscriptions: [],
@@ -10043,6 +10104,11 @@ async function saveSettings() {
         0,
         Math.min(100000, Math.floor(Number(form.affiliate_signup_reward_amount) || 0)),
       ),
+      affiliate_signup_reward_min_spend: Math.max(
+        0,
+        Math.min(1000000, Number(form.affiliate_signup_reward_min_spend) || 0),
+      ),
+      affiliate_signup_reward_min_spend_since: (form.affiliate_signup_reward_min_spend_since || "").trim(),
       affiliate_code_admits_signup: form.affiliate_code_admits_signup,
       default_concurrency: form.default_concurrency,
       default_subscriptions: normalizedDefaultSubscriptions,

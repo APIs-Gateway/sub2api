@@ -22,6 +22,10 @@ export interface PointsConfig {
   withdraw_usd_cny_rate: number
   redeem_balance_on: boolean
   redeem_plan_on: boolean
+  /** 邀请注册奖励：开关、积分数、被邀请人累计消费门槛（0=注册即发）。老后端可能不返回。 */
+  signup_reward_enabled?: boolean
+  signup_reward_amount?: number
+  signup_reward_min_spend?: number
 }
 
 export interface PointsOverview {
