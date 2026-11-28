@@ -1,13 +1,21 @@
 name: Security Scan
 
+# push 只跑 main,PR 分支上的推送由 pull_request 那一轮覆盖,不再重复跑。
 on:
   push:
+    branches: [main]
   pull_request:
   schedule:
     - cron: '0 3 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# PR 上新推送取消旧的一轮;main / 定时 / 手动用 run_id 做组名,互不取消。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   backend-security:

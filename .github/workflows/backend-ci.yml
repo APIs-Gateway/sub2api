@@ -1,297 +1,230 @@
 name: CI
 
+# 触发规则:
+#   - pull_request:任何 PR(含 stacked PR)每次推送跑一轮。
+#   - push:只在 main 上跑(合并后的基线,同时负责写 Go 编译缓存)。
+#   PR 分支上的 push 不再触发,避免同一个 head 跑 push + pull_request 两遍。
+#   - workflow_dispatch:没有 PR 的分支想手动跑一轮时用。
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# PR 上同一个 PR 新推送会取消旧的一轮;main / 手动触发用 run_id 做组名,互不取消,
+# 连续合并时每个 main commit 都会完整跑完。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  test:
+  # 原来的单个 test job(串行约 60 个 step,main 上 45-47 分钟)按测试组拆成并行分片。
+  # 每个分片是独立 runner,分片内的 step 仍然串行,和原来一样;分片之间没有共享状态。
+  # 所有 go test 命令、tags、-race、-run 过滤和 -count/-timeout 都原样保留,只是换了分片。
+  backend:
+    name: backend (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: "1"
+      # 集成测试容器都由测试代码显式 Terminate;runner 是一次性的,不需要 ryuk 守护容器。
+      # 关掉它顺带避开 Docker Hub 拉 testcontainers/ryuk 偶发 502(分片后起容器的 job 变多)。
+      TESTCONTAINERS_RYUK_DISABLED: "true"
+    defaults:
+      run:
+        working-directory: backend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 覆盖率:全量单测(无 race),约 10 分钟,是最长的一片。
+          - shard: unit-cover
+            coverage_file: backend/coverage-unit.out
+            script: |
+              g "Unit tests (coverage)" make test-unit-cover
+
+          # 覆盖率:全量集成测试(PG/Redis testcontainers,无 race),约 10 分钟。
+          - shard: integration-cover
+            coverage_file: backend/coverage-integration.out
+            script: |
+              g "Integration tests (coverage)" make test-integration-cover
+
+          # 无需容器的 race 契约测试(第 1 组)。
+          - shard: unit-race-1
+            script: |
+              g "Responses namespace contracts and lazy span boundaries (race)" go test -tags=unit -race -parallel=1 -count=1 -timeout=8m -v -run '(?i)namespace' ./internal/service/
+              echo "::group::Deployment shell contracts"
+              (cd .. && /bin/sh deploy/tests/docker-compose-security-test.sh && /bin/sh deploy/test-caddyfile-cache.sh && python3 deploy/tests/docker-compose-redis-command-test.py && python3 deploy/tests/admin-bootstrap-defaults-test.py)
+              echo "::endgroup::"
+              g "Fresh admin credential login, bcrypt and CLI dialogue contracts (race)" go test -tags=unit -race -count=1 -v -run '^TestSetupAdminCredentials_|^TestPrepareAdminCredentials|^TestBootstrapAdminUser|^TestSetupDefaultAdminConcurrency$' ./internal/setup/
+              echo "::group::CC fallback terminal source and fixture formatting (remote only)"
+              (cd .. && gofmt -d backend/internal/service/openai_gateway_responses_chat_fallback.go backend/internal/service/openai_gateway_messages_chat_fallback.go backend/internal/service/openai_raw_stream_truncation.go backend/internal/service/chat_fallback_terminal_test.go backend/internal/repository/chat_fallback_terminal_integration_test.go)
+              (cd .. && test -z "$(gofmt -l backend/internal/service/openai_gateway_responses_chat_fallback.go backend/internal/service/openai_gateway_messages_chat_fallback.go backend/internal/service/openai_raw_stream_truncation.go backend/internal/service/chat_fallback_terminal_test.go backend/internal/repository/chat_fallback_terminal_integration_test.go)")
+              echo "::endgroup::"
+              g "CC fallback actual three-mode terminal, tools and partial metering (race)" go test -tags=unit -race -count=1 -timeout=10m -v -run '^TestChatFallbackTerminal_' ./internal/service/
+              g "Anthropic start output metering and interrupted native attempts (race)" go test -tags=unit -race -count=1 -v -run '^TestAnthropicStartOutput_' ./internal/service/
+              g "WS payload TTFT and first-output deadline (race)" go test -tags=unit -race -count=1 -v -run '^TestResponsesStreamHasOutput|^TestWSEmptyTTFT|^TestOpenAIWSPassthroughDeadlineAndLifecycleHelpers$|^TestOpenAIWSPassthroughEventClassification$' ./internal/pkg/openai/ ./internal/service/ ./internal/service/openai_ws_v2/
+              g "WS image input usage and bounded lineage (race)" go test -tags=unit -race -count=1 -v -run '^TestWSImageInput' ./internal/service/ ./internal/service/openai_ws_v2/
+              g "Tool-name restoration protocol fields and opaque content (race)" go test -tags=unit -race -count=1 -v -run '^TestToolNameRestoreProtocol_|^TestRestoreToolNamesInBytes|^TestApplyToolNameRewriteToBody' ./internal/service/
+              g "Google/GitHub bound identity email drift and authentication controls" go test -tags=unit -count=1 -run '^TestEmailOAuthBoundIdentity|^TestEmailOAuthCallbackDoesNotAutoLinkLocalAccount|^TestLogin2FACompletesPendingOAuthBindAndConsumesSession' -v ./internal/handler/
+              g "Configured ops thresholds actual dashboard regressions" go test -tags=unit -race -count=1 -v -run '^TestOpsConfiguredThresholds|^TestComputeDashboardHealthScore|^TestComputeBusinessHealth|^TestComputeInfraHealth' ./internal/service/
+              g "OpenAI OAuth rejection recovery boundaries (race)" go test -tags=unit -race -count=1 -run '^TestOpenAI401Recovery' -v ./internal/service/
+              g "EasyPay signing domain, return URL and retained dialect contracts (race)" go test -tags=unit -race -count=1 -v -run '^TestEasyPayNotify|^TestEasyPayVerifyNotification|^TestEasyPaySign|^TestEasyPayVerifySign|^TestCanonicalizeReturnURL|^TestBuildPaymentReturnURL|^TestHandlePaymentNotification(RejectsEasyPaySimulatedSuccessWhenUpstreamPending|AcceptsEasyPaySuccessAfterUpstreamPaid)$' ./internal/payment/provider/ ./internal/service/
+              g "Responses refusal conversion and actual Chat output (race)" go test -tags=unit -race -count=1 -v -run '^TestResponsesRefusal_|^TestResponsesToChatCompletions_RefusalPreserved|^TestResponsesEventToChatChunks_RefusalDelta|^TestBufferedResponseAccumulator_RefusalRebuiltFromDeltas' ./internal/pkg/apicompat/ ./internal/service/
+              g "Codex live selected-account catalog contracts (race)" go test -tags=unit -race -count=1 -v -run '^TestCodexAccountMapping_' ./internal/service/ ./internal/handler/
+              g "Snapshot cache, invalidation, fail-closed and pinned policy contracts (actual race results)" go test -tags=unit -race -count=1 -v -run '^Test(MatrixPolicy|StagedPolicy|PricingShadow)_' ./internal/service/
+
+          # 无需容器的 race / 命名契约测试(第 2 组)。
+          - shard: unit-race-2
+            script: |
+              g "Chat ping and disconnect regression tests (actual results)" go test -tags=unit -race -count=1 -v -run '^TestHandleCCStreamingFromAnthropic_Ping|^TestCompatStream|^TestCompatProviderSSEError|^TestCompatReadersOversizedLine' ./internal/service/
+              g "Unit tests (race, matrix policy and shadow comparison)" go test -tags=unit -race -count=1 -run '^Test(MatrixPolicy|StagedPolicy|PricingShadow)_' ./internal/service/
+              g "Unit tests (race, Antigravity partial metering)" go test -tags=unit -race -count=1 -run '^TestAntigravityInterruptedUsage' -v ./internal/service/
+              echo "::group::Model field ambiguity and upstream mismatch regression gate"
+              git rev-parse HEAD
+              git hash-object internal/service/gateway_model_field.go internal/service/duplicate_model_upstream_audit_test.go internal/service/gateway_model_field_test.go internal/service/gateway_model_ws_forward_test.go internal/handler/gateway_model_field_test.go internal/service/gateway_model_embeddings_audit_test.go internal/handler/gateway_model_embeddings_audit_test.go internal/service/gateway_model_other_forward_audit_test.go internal/handler/gateway_model_other_ingress_audit_test.go
+              test -z "$(gofmt -l internal/service/gateway_model_field.go internal/service/duplicate_model_upstream_audit_test.go internal/service/gateway_model_field_test.go internal/service/gateway_model_ws_forward_test.go internal/handler/gateway_model_field_test.go internal/service/gateway_model_embeddings_audit_test.go internal/handler/gateway_model_embeddings_audit_test.go internal/service/gateway_model_other_forward_audit_test.go internal/handler/gateway_model_other_ingress_audit_test.go)"
+              go test -tags=unit -race -count=1 -v -run '^(TestGatewayModelField_|TestGatewayModelEmbeddings_|TestGatewayModelOtherIngress_|TestGatewayModelOtherForward_|TestDuplicateModelAudit_|TestUpstreamModelMismatch_|TestOpenAIResponsesWebSocket|TestOpenAIGatewayResponses_|TestForwardAsAnthropic_ForceChatCompletionsRequestValidationErrors|TestOpenAIGatewayServiceForwardRejectsUndecodableReasoningReplay)' ./internal/service/ ./internal/handler/
+              echo "::endgroup::"
+              g "Refund storage failure regressions (named)" go test -tags=unit -count=1 -v -run '^TestRefundPendingStorageFailures|^TestRefundConfirmedSettlementStorageFailure|^TestRefundSettlementDeletedUser|^TestRefundMalformedSnapshot|^TestRefundBlockedDiagnostics' ./internal/service/
+              g "Account test structured failure metadata (named)" go test -tags=unit -count=1 -run '^TestAccountTestLogging_' -v ./internal/service/
+              g "CC length terminal event and real readers" go test -tags=unit -count=1 -v -run '^TestChatLengthTerminal_|^TestStream_ValidToolCallAtOutputLimitKeepsIncompleteResponse$|^TestStream_ReasoningOnlySynthesizesVisibleText$' ./internal/pkg/apicompat/ ./internal/service/
+              g "Unit tests (converted Responses input recovery)" go test -tags=unit -count=1 -run '^TestStructuredInputRecovery_|^TestConvertedResponsesInputStringRejection|^TestForwardAsChatCompletions_(ResponsesSupportedFallsBack|StructuredInput)' -v ./internal/service/
+              g "Gemini audio known sibling required shapes and preserved filters (race)" go test -tags=unit -race -count=1 -v -run '^TestChatInputAudioShape_' ./internal/pkg/apicompat/
+              g "Chat-to-Responses legacy calls, developer and named choice contracts (race)" go test -tags=unit -race -count=1 -v -run '^TestChatResponsesContracts_|^TestChatCompletionsToResponses_(ToolChoiceShape|DeveloperRolePreserved|LegacyFunction)' ./internal/pkg/apicompat/ ./internal/service/
+              g "Unit tests (cache write wire and accounting agreement)" go test -tags=unit -count=1 -run '^TestCacheWriteUsage_' -v ./internal/pkg/apicompat/ ./internal/service/
+              g "Unit tests (Chat input audio boundaries)" go test -tags=unit -count=1 -run '^TestChatInputAudio_' -v ./internal/pkg/apicompat/ ./internal/service/
+              g "HTTP bridge continuation history actual wire (race)" go test -tags=unit -race -count=1 -v -run '^TestOpenAIWSHTTPBridgeHistory_|^TestOpenAIWSHTTPBridgeKeepsContinuation|^TestOpenAIWSHTTPBridgeFullCustomToolHistory|^TestOpenAIWSHTTPBridgeObjectToolOutput' ./internal/service/
+              echo "::group::Original client account selection source formatting"
+              files="internal/handler/openai_client_restriction_selection.go internal/handler/openai_responses_attempt.go internal/handler/openai_chat_completions_attempt.go internal/handler/openai_client_restriction_selection_handler_test.go internal/handler/openai_client_restriction_selection_state_test.go internal/repository/openai_client_restriction_selection_integration_test.go"
+              gofmt -d $files
+              test -z "$(gofmt -l $files)"
+              echo "::endgroup::"
+              g "Original client account selection actual HTTP and slot contracts (race)" go test -tags=unit -race -count=1 -v -run '^TestClientRestrictedSelection' ./internal/handler/
+              g "Responses input token regression tests (actual results)" go test -tags=unit -count=1 -v -run '^TestResponsesInputTokens|^TestGatewayResponsesInputTokens' ./internal/service/ ./internal/handler/ ./internal/server/routes/
+              g "Cold and fast concurrent snapshots (100 actual race iterations)" go test -tags=unit -race -count=100 -timeout=2m -v -run '^(TestStagedPolicy_ColdSnapshotLoadsSynchronously|TestMatrixPolicy_ConcurrentFastSnapshotReads)$' ./internal/service/
+
+          # PG/Redis 集成测试(第 A 组)。setup CLI 的覆盖率 profile 在这一片产出并上传。
+          - shard: integration-race-a
+            coverage_file: backend/coverage-setup-cli.out
+            script: |
+              echo "::group::Fresh admin actual PostgreSQL creation, concurrent bootstrap and existing-user preservation (race)"
+              SETUP_CLI_COVERPROFILE="$GITHUB_WORKSPACE/backend/coverage-setup-cli.out" go test -tags=integration -race -coverpkg=./internal/setup -covermode=atomic -count=1 -v -run '^TestSetupAdminBootstrapPostgres_' ./internal/setup/
+              test -s coverage-setup-cli.out
+              bash ./tools/normalize-go-coverprofile.sh coverage-setup-cli.out
+              echo "::endgroup::"
+              g "CC fallback actual wallet and card settlement, unknown holds and wire (PG Redis race)" go test -tags=integration -race -count=1 -timeout=10m -v -run '^TestChatFallbackTerminalHTTP_' ./internal/repository/
+              g "Anthropic start output actual wallet and card settlement (PG Redis race)" go test -tags=integration -race -count=1 -v -run '^TestAnthropicStartOutputHTTP_' ./internal/repository/
+              g "WS TTFT actual two-turn wallet and card settlement (PG Redis race)" go test -tags=integration -race -count=1 -v -run '^TestWSEmptyTTFTHTTP_' ./internal/repository/
+              g "WS image input actual funding and settlement (PG Redis race)" go test -tags=integration -race -count=1 -v -run '^TestWSImageInputHTTP_' ./internal/repository/
+              g "OpenAI OAuth HTTP recovery and funded billing (actual PG Redis race)" go test -tags=integration -race -count=1 -run '^TestOpenAI401HTTP_' -v ./internal/repository/
+              g "EasyPay actual signed webhook and guarded wallet fulfillment (PG Redis race)" go test -tags=integration -race -count=1 -v -run '^TestEasyPaySignReuseHTTP_' ./internal/repository/
+
+          # PG/Redis 集成测试(第 B 组)。
+          - shard: integration-race-b
+            script: |
+              g "Integration tests (chat ping actual account failover and billing)" go test -tags=integration -count=1 -v -run '^TestChatPingHTTP_' ./internal/repository/
+              echo "::group::Refund subscription compensation and paid renewal (actual PostgreSQL)"
+              go test -tags=integration -count=1 -v -run '^TestRefundSubscriptionAdjustmentPG_' ./internal/service/
+              go test -tags=integration -count=1 -v -run '^TestRefundSubscriptionActualRepo_' ./internal/repository/
+              go test -tags=unit -count=1 -v -run '^TestRefundSubscriptionAdjustmentSnapshot' ./internal/service/
+              echo "::endgroup::"
+              g "Gemini audio public shape refusals and actual wallet card funding (PG Redis race)" go test -tags=integration -race -count=1 -timeout=10m -v -run '^TestChatInputAudioShapeHTTP_' ./internal/repository/
+              g "Responses refusal actual wallet and card settlement (PG Redis)" go test -tags=integration -count=1 -v -run '^TestResponsesRefusalHTTP_' ./internal/repository/
+              g "Account test actual logger Ops PostgreSQL attribution (race)" go test -tags=integration -race -count=1 -run '^TestAccountTestLogging_ActualLoggerOpsPostgres$' -v ./internal/repository/
+
+          # PG/Redis 集成测试(第 C 组)。
+          - shard: integration-race-c
+            script: |
+              g "Integration tests (Antigravity actual partial billing)" go test -tags=integration -count=1 -run '^TestAntigravityPartialBilling_' -v ./internal/repository/
+              g "CC length actual Responses and Messages wallet/card billing" go test -tags=integration -count=1 -v -run '^TestChatLengthTerminalHTTP_' ./internal/repository/
+              g "Integration tests (converted Responses fallback actual billing)" go test -tags=integration -count=1 -run '^TestStructuredInputFallbackHTTP_' -v ./internal/repository/
+              g "Original client account selection actual PG Redis wallet card and held lease contracts (race)" go test -tags=integration -race -count=1 -v -run '^TestClientRestrictedSelectionHTTP_' ./internal/repository/
+              g "Integration tests (cache write wire and wallet card agreement)" go test -tags=integration -count=1 -run '^TestCacheWriteUsageHTTP_' -v ./internal/repository/
+              g "Integration tests (Gemini Chat audio and local funding release)" go test -tags=integration -count=1 -run '^TestChatInputAudioHTTP_' -v ./internal/repository/
+              g "HTTP bridge continuation history actual funded turns (PG Redis race)" go test -tags=integration -race -count=1 -v -run '^TestOpenAIWSBridgeHistoryHTTP_|^TestBillingInflightWS_RealTurnReservesBillsOnceAndReleases|^TestBillingInflightWS_LaterModelUsesActualBillingSource' ./internal/repository/
+              g "Integration tests (race, TOTP login claims)" go test -tags=integration -race -count=1 -run '^TestLoginTotpAtomic' -v ./internal/handler/
+              echo "::group::Refund transaction regressions (named)"
+              go test -tags=integration -count=1 -v -run '^TestRefundPendingAtomicPostgres_|^TestRefundAtomicPostgres_' ./internal/service/ ./internal/repository/
+              echo "::endgroup::"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
+        id: setup-go
         with:
           go-version-file: backend/go.mod
           check-latest: false
-          cache: true
-          cache-dependency-path: backend/go.sum
+          # setup-go 自带的缓存所有分片共用一个 key,只有最先保存的那片能写进去。
+          # 这里改成按分片分别缓存(见下面两个 cache step)。
+          cache: false
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.26.6'
-      - name: Responses namespace contracts and lazy span boundaries (race)
-        working-directory: backend
-        run: go test -tags=unit -race -parallel=1 -count=1 -timeout=8m -v -run '(?i)namespace' ./internal/service/
-      - name: Deployment shell contracts
+      # 模块缓存 + 编译缓存,按分片分 key(每片编译的 tags/-race/-cover 组合不同)。
+      # 只有 main 的 push 负责保存,PR 只读 main 的缓存,避免每个 PR 推送都写 GB 级缓存把 10GB 配额冲掉。
+      - name: Restore Go module and build cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ matrix.shard }}-${{ runner.os }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('backend/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ matrix.shard }}-${{ runner.os }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('backend/go.sum') }}-
+            go-${{ matrix.shard }}-${{ runner.os }}-${{ steps.setup-go.outputs.go-version }}-
+      - name: Run test group
         run: |
-          /bin/sh deploy/tests/docker-compose-security-test.sh
-          /bin/sh deploy/test-caddyfile-cache.sh
-          python3 deploy/tests/docker-compose-redis-command-test.py
-          python3 deploy/tests/admin-bootstrap-defaults-test.py
-      - name: Fresh admin credential login, bcrypt and CLI dialogue contracts (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestSetupAdminCredentials_|^TestPrepareAdminCredentials|^TestBootstrapAdminUser|^TestSetupDefaultAdminConcurrency$' ./internal/setup/
-      - name: Fresh admin actual PostgreSQL creation, concurrent bootstrap and existing-user preservation (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-          SETUP_CLI_COVERPROFILE: ${{ github.workspace }}/backend/coverage-setup-cli.out
-        run: |
-          go test -tags=integration -race -coverpkg=./internal/setup -covermode=atomic -count=1 -v -run '^TestSetupAdminBootstrapPostgres_' ./internal/setup/
-          test -s coverage-setup-cli.out
-          bash ./tools/normalize-go-coverprofile.sh coverage-setup-cli.out
-      - name: CC fallback terminal source and fixture formatting (remote only)
-        run: |
-          gofmt -d backend/internal/service/openai_gateway_responses_chat_fallback.go backend/internal/service/openai_gateway_messages_chat_fallback.go backend/internal/service/openai_raw_stream_truncation.go backend/internal/service/chat_fallback_terminal_test.go backend/internal/repository/chat_fallback_terminal_integration_test.go
-          test -z "$(gofmt -l backend/internal/service/openai_gateway_responses_chat_fallback.go backend/internal/service/openai_gateway_messages_chat_fallback.go backend/internal/service/openai_raw_stream_truncation.go backend/internal/service/chat_fallback_terminal_test.go backend/internal/repository/chat_fallback_terminal_integration_test.go)"
-      - name: CC fallback actual three-mode terminal, tools and partial metering (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -timeout=10m -v -run '^TestChatFallbackTerminal_' ./internal/service/
-      - name: CC fallback actual wallet and card settlement, unknown holds and wire (PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -timeout=10m -v -run '^TestChatFallbackTerminalHTTP_' ./internal/repository/
-      - name: Anthropic start output metering and interrupted native attempts (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestAnthropicStartOutput_' ./internal/service/
-      - name: Anthropic start output actual wallet and card settlement (PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -v -run '^TestAnthropicStartOutputHTTP_' ./internal/repository/
-      - name: WS payload TTFT and first-output deadline (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestResponsesStreamHasOutput|^TestWSEmptyTTFT|^TestOpenAIWSPassthroughDeadlineAndLifecycleHelpers$|^TestOpenAIWSPassthroughEventClassification$' ./internal/pkg/openai/ ./internal/service/ ./internal/service/openai_ws_v2/
-      - name: WS TTFT actual two-turn wallet and card settlement (PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -v -run '^TestWSEmptyTTFTHTTP_' ./internal/repository/
-      - name: WS image input usage and bounded lineage (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestWSImageInput' ./internal/service/ ./internal/service/openai_ws_v2/
-      - name: WS image input actual funding and settlement (PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -v -run '^TestWSImageInputHTTP_' ./internal/repository/
-      - name: Integration tests (chat ping actual account failover and billing)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -v -run '^TestChatPingHTTP_' ./internal/repository/
-      - name: Tool-name restoration protocol fields and opaque content (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestToolNameRestoreProtocol_|^TestRestoreToolNamesInBytes|^TestApplyToolNameRewriteToBody' ./internal/service/
-      - name: Google/GitHub bound identity email drift and authentication controls
-        working-directory: backend
-        run: go test -tags=unit -count=1 -run '^TestEmailOAuthBoundIdentity|^TestEmailOAuthCallbackDoesNotAutoLinkLocalAccount|^TestLogin2FACompletesPendingOAuthBindAndConsumesSession' -v ./internal/handler/
-      - name: Configured ops thresholds actual dashboard regressions
-        working-directory: backend
-        run: go test -tags=unit -race -count=1 -v -run '^TestOpsConfiguredThresholds|^TestComputeDashboardHealthScore|^TestComputeBusinessHealth|^TestComputeInfraHealth' ./internal/service/
-      - name: OpenAI OAuth rejection recovery boundaries (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -run '^TestOpenAI401Recovery' -v ./internal/service/
-      - name: OpenAI OAuth HTTP recovery and funded billing (actual PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -run '^TestOpenAI401HTTP_' -v ./internal/repository/
-      - name: EasyPay signing domain, return URL and retained dialect contracts (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestEasyPayNotify|^TestEasyPayVerifyNotification|^TestEasyPaySign|^TestEasyPayVerifySign|^TestCanonicalizeReturnURL|^TestBuildPaymentReturnURL|^TestHandlePaymentNotification(RejectsEasyPaySimulatedSuccessWhenUpstreamPending|AcceptsEasyPaySuccessAfterUpstreamPaid)$' ./internal/payment/provider/ ./internal/service/
-      - name: EasyPay actual signed webhook and guarded wallet fulfillment (PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -v -run '^TestEasyPaySignReuseHTTP_' ./internal/repository/
-      - name: Responses refusal conversion and actual Chat output (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestResponsesRefusal_|^TestResponsesToChatCompletions_RefusalPreserved|^TestResponsesEventToChatChunks_RefusalDelta|^TestBufferedResponseAccumulator_RefusalRebuiltFromDeltas' ./internal/pkg/apicompat/ ./internal/service/
-      - name: Responses refusal actual wallet and card settlement (PG Redis)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -v -run '^TestResponsesRefusalHTTP_' ./internal/repository/
-      - name: Codex live selected-account catalog contracts (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestCodexAccountMapping_' ./internal/service/ ./internal/handler/
-      - name: Snapshot cache, invalidation, fail-closed and pinned policy contracts (actual race results)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^Test(MatrixPolicy|StagedPolicy|PricingShadow)_' ./internal/service/
-      - name: Unit tests (coverage)
-        working-directory: backend
-        run: make test-unit-cover
-      - name: Refund subscription compensation and paid renewal (actual PostgreSQL)
-        working-directory: backend
-        run: |
-          go test -tags=integration -count=1 -v -run '^TestRefundSubscriptionAdjustmentPG_' ./internal/service/
-          go test -tags=integration -count=1 -v -run '^TestRefundSubscriptionActualRepo_' ./internal/repository/
-          go test -tags=unit -count=1 -v -run '^TestRefundSubscriptionAdjustmentSnapshot' ./internal/service/
-      - name: Refund storage failure regressions (named)
-        working-directory: backend
-        run: go test -tags=unit -count=1 -v -run '^TestRefundPendingStorageFailures|^TestRefundConfirmedSettlementStorageFailure|^TestRefundSettlementDeletedUser|^TestRefundMalformedSnapshot|^TestRefundBlockedDiagnostics' ./internal/service/
-      - name: Account test structured failure metadata (named)
-        working-directory: backend
-        run: go test -tags=unit -count=1 -run '^TestAccountTestLogging_' -v ./internal/service/
-      - name: CC length terminal event and real readers
-        working-directory: backend
-        run: go test -tags=unit -count=1 -v -run '^TestChatLengthTerminal_|^TestStream_ValidToolCallAtOutputLimitKeepsIncompleteResponse$|^TestStream_ReasoningOnlySynthesizesVisibleText$' ./internal/pkg/apicompat/ ./internal/service/
-      - name: Unit tests (converted Responses input recovery)
-        working-directory: backend
-        run: go test -tags=unit -count=1 -run '^TestStructuredInputRecovery_|^TestConvertedResponsesInputStringRejection|^TestForwardAsChatCompletions_(ResponsesSupportedFallsBack|StructuredInput)' -v ./internal/service/
-      - name: Gemini audio known sibling required shapes and preserved filters (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestChatInputAudioShape_' ./internal/pkg/apicompat/
-      - name: Gemini audio public shape refusals and actual wallet card funding (PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -timeout=10m -v -run '^TestChatInputAudioShapeHTTP_' ./internal/repository/
-      - name: Chat-to-Responses legacy calls, developer and named choice contracts (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestChatResponsesContracts_|^TestChatCompletionsToResponses_(ToolChoiceShape|DeveloperRolePreserved|LegacyFunction)' ./internal/pkg/apicompat/ ./internal/service/
-      - name: Unit tests (cache write wire and accounting agreement)
-        working-directory: backend
-        run: go test -tags=unit -count=1 -run '^TestCacheWriteUsage_' -v ./internal/pkg/apicompat/ ./internal/service/
-      - name: Unit tests (Chat input audio boundaries)
-        working-directory: backend
-        run: go test -tags=unit -count=1 -run '^TestChatInputAudio_' -v ./internal/pkg/apicompat/ ./internal/service/
-      - name: HTTP bridge continuation history actual wire (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestOpenAIWSHTTPBridgeHistory_|^TestOpenAIWSHTTPBridgeKeepsContinuation|^TestOpenAIWSHTTPBridgeFullCustomToolHistory|^TestOpenAIWSHTTPBridgeObjectToolOutput' ./internal/service/
-      # 分组策略矩阵实现带快照缓存、singleflight 与失效通知，并发路径靠 -race 守住。
-      # 只跑矩阵、阶段与影子比对相关测试；流式 ping 保留独立命名门槛。
-      - name: Chat ping and disconnect regression tests (actual results)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestHandleCCStreamingFromAnthropic_Ping|^TestCompatStream|^TestCompatProviderSSEError|^TestCompatReadersOversizedLine' ./internal/service/
-      - name: Unit tests (race, matrix policy and shadow comparison)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -run '^Test(MatrixPolicy|StagedPolicy|PricingShadow)_' ./internal/service/
-      - name: Unit tests (race, Antigravity partial metering)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -run '^TestAntigravityInterruptedUsage' -v ./internal/service/
-      - name: Model field ambiguity and upstream mismatch regression gate
-        working-directory: backend
-        run: |
-          git rev-parse HEAD
-          git hash-object internal/service/gateway_model_field.go internal/service/duplicate_model_upstream_audit_test.go internal/service/gateway_model_field_test.go internal/service/gateway_model_ws_forward_test.go internal/handler/gateway_model_field_test.go internal/service/gateway_model_embeddings_audit_test.go internal/handler/gateway_model_embeddings_audit_test.go internal/service/gateway_model_other_forward_audit_test.go internal/handler/gateway_model_other_ingress_audit_test.go
-          test -z "$(gofmt -l internal/service/gateway_model_field.go internal/service/duplicate_model_upstream_audit_test.go internal/service/gateway_model_field_test.go internal/service/gateway_model_ws_forward_test.go internal/handler/gateway_model_field_test.go internal/service/gateway_model_embeddings_audit_test.go internal/handler/gateway_model_embeddings_audit_test.go internal/service/gateway_model_other_forward_audit_test.go internal/handler/gateway_model_other_ingress_audit_test.go)"
-          go test -tags=unit -race -count=1 -v -run '^(TestGatewayModelField_|TestGatewayModelEmbeddings_|TestGatewayModelOtherIngress_|TestGatewayModelOtherForward_|TestDuplicateModelAudit_|TestUpstreamModelMismatch_|TestOpenAIResponsesWebSocket|TestOpenAIGatewayResponses_|TestForwardAsAnthropic_ForceChatCompletionsRequestValidationErrors|TestOpenAIGatewayServiceForwardRejectsUndecodableReasoningReplay)' ./internal/service/ ./internal/handler/
-      - name: Integration tests (coverage)
-        working-directory: backend
-        run: make test-integration-cover
-      - name: Account test actual logger Ops PostgreSQL attribution (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -run '^TestAccountTestLogging_ActualLoggerOpsPostgres$' -v ./internal/repository/
-      - name: Integration tests (Antigravity actual partial billing)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -run '^TestAntigravityPartialBilling_' -v ./internal/repository/
-      - name: CC length actual Responses and Messages wallet/card billing
-        working-directory: backend
-        run: go test -tags=integration -count=1 -v -run '^TestChatLengthTerminalHTTP_' ./internal/repository/
-      - name: Integration tests (converted Responses fallback actual billing)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -run '^TestStructuredInputFallbackHTTP_' -v ./internal/repository/
-      - name: Original client account selection source formatting
-        working-directory: backend
-        run: |
-          files="internal/handler/openai_client_restriction_selection.go internal/handler/openai_responses_attempt.go internal/handler/openai_chat_completions_attempt.go internal/handler/openai_client_restriction_selection_handler_test.go internal/handler/openai_client_restriction_selection_state_test.go internal/repository/openai_client_restriction_selection_integration_test.go"
-          gofmt -d $files
-          test -z "$(gofmt -l $files)"
-      - name: Original client account selection actual HTTP and slot contracts (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestClientRestrictedSelection' ./internal/handler/
-      - name: Original client account selection actual PG Redis wallet card and held lease contracts (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -v -run '^TestClientRestrictedSelectionHTTP_' ./internal/repository/
-      - name: Integration tests (cache write wire and wallet card agreement)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -run '^TestCacheWriteUsageHTTP_' -v ./internal/repository/
-      - name: Integration tests (Gemini Chat audio and local funding release)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -run '^TestChatInputAudioHTTP_' -v ./internal/repository/
-      - name: HTTP bridge continuation history actual funded turns (PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -v -run '^TestOpenAIWSBridgeHistoryHTTP_|^TestBillingInflightWS_RealTurnReservesBillsOnceAndReleases|^TestBillingInflightWS_LaterModelUsesActualBillingSource' ./internal/repository/
-      - name: Integration tests (race, TOTP login claims)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -run '^TestLoginTotpAtomic' -v ./internal/handler/
-      - name: Refund transaction regressions (named)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -v -run '^TestRefundPendingAtomicPostgres_|^TestRefundAtomicPostgres_' ./internal/service/ ./internal/repository/
-      - name: Preserve actual Go coverage profiles
-        if: always()
+          # 每组测试单独折叠成一个日志分组;任一命令失败整个 step 失败(bash -e)。
+          g() { echo "::group::$1"; shift; "$@"; echo "::endgroup::"; }
+          ${{ matrix.script }}
+      - name: Preserve actual Go coverage profile
+        if: always() && matrix.coverage_file != ''
         uses: actions/upload-artifact@v7
         with:
-          name: backend-go-coverage-${{ github.run_id }}
-          path: |
-            backend/coverage-unit.out
-            backend/coverage-integration.out
-            backend/coverage-setup-cli.out
+          name: backend-go-coverage-${{ matrix.shard }}-${{ github.run_id }}
+          path: ${{ matrix.coverage_file }}
           if-no-files-found: ignore
           retention-days: 14
-      - name: Responses input token regression tests (actual results)
-        working-directory: backend
-        run: go test -tags=unit -count=1 -v -run '^TestResponsesInputTokens|^TestGatewayResponsesInputTokens' ./internal/service/ ./internal/handler/ ./internal/server/routes/
-      - name: Cold and fast concurrent snapshots (100 actual race iterations)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=100 -timeout=2m -v -run '^(TestStagedPolicy_ColdSnapshotLoadsSynchronously|TestMatrixPolicy_ConcurrentFastSnapshotReads)$' ./internal/service/
+      # 3 个产出 profile 的分片各上传一次(backend flag),加上 frontend-coverage 的 1 次,
+      # 正好每轮 4 次上传,对应 codecov.yml 里的 after_n_builds: 4。
       - name: Upload backend coverage to Codecov
+        if: matrix.coverage_file != ''
         uses: codecov/codecov-action@v5
         with:
-          files: backend/coverage-unit.out,backend/coverage-integration.out,backend/coverage-setup-cli.out
+          files: ${{ matrix.coverage_file }}
           flags: backend
+          name: backend-${{ matrix.shard }}
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: APIs-Gateway/sub2api
           override_pr: ${{ github.event.pull_request.number }}
           base_sha: ${{ github.event.pull_request.base.sha }}
           fail_ci_if_error: false
+      - name: Save Go module and build cache (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ matrix.shard }}-${{ runner.os }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('backend/go.sum') }}-${{ github.sha }}
+
+  # required check `test` 的汇总 job:job id / 显示名必须保持 `test`。
+  # 任何分片失败、被取消或被跳过都让它失败;if: always() 保证分片失败时它也会跑出红色结果,
+  # 而不是被跳过(被跳过的 required check 会被当成通过)。
+  test:
+    needs: [backend]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every backend shard to succeed
+        env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+        run: |
+          echo "backend shards: ${BACKEND_RESULT}"
+          test "${BACKEND_RESULT}" = "success"
 
   frontend:
     runs-on: ubuntu-latest
@@ -369,8 +302,9 @@ jobs:
           args: --timeout=30m
           working-directory: backend
 
+  # 不再 needs: test —— 原来它排在 45 分钟的 test 后面再跑 3 分钟;现在和测试分片并行。
+  # 上传的 frontend 覆盖率是每轮 4 次 Codecov 上传里的第 4 次(另 3 次来自 backend 分片)。
   frontend-coverage:
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

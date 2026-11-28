@@ -1,6 +1,8 @@
-# 等 push + pull_request 两轮 workflow 的 backend/frontend upload 都到齐,
-# 再算 status / 发评论,避免同仓库 PR 里两个 frontend upload 先到齐后,
-# Codecov 抢在 backend coverage 上传前算出偏低的假 fail。
+# 每个 commit 的一轮 CI(PR 只跑 pull_request 那轮,main 只跑 push 那轮)共上传 4 次:
+#   backend 3 次(unit-cover / integration-cover / integration-race-a 三个分片各一次,
+#   见 .github/workflows/backend-ci.yml 的 backend job)+ frontend 1 次(frontend-coverage)。
+# 等这 4 次都到齐再算 status / 发评论,避免 frontend 先到、backend 没传完就算出偏低的假 fail。
+# 改上传次数(增减带 coverage_file 的分片、增减 frontend 上传)时必须同步改下面两处 after_n_builds。
 # main requires the legacy codecov/patch commit status.
 github_checks: false
 
