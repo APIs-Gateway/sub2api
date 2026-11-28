@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -266,6 +267,11 @@ type LiteLLMModelPricing struct {
 	OutputCostPerImageToken                    float64 `json:"output_cost_per_image_token"` // 图片输出 token 价格
 	InputCostPerImageToken                     float64 `json:"input_cost_per_image_token"`  // 图片输入 token 价格
 	CacheReadInputImageTokenCost               float64 `json:"cache_read_input_image_token_cost"`
+	// ObservedCacheReadAboveRatio / ObservedCacheWriteAboveRatio 是折算时记下的价格表 cache above 价 ÷ 基础价。
+	// 折算会清掉 cache above 绝对价（计费跟随输入倍率），这两个值只为让价格快照 diff 仍能看到
+	// cache above 价的变化，不参与计费，也不从价格表 JSON 读取。
+	ObservedCacheReadAboveRatio  float64 `json:"observed_cache_read_above_ratio,omitempty"`
+	ObservedCacheWriteAboveRatio float64 `json:"observed_cache_write_above_ratio,omitempty"`
 }
 
 // PricingRemoteClient 远程价格数据获取接口
@@ -711,7 +717,7 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 			entry.LongContextInputCostMultiplier == nil &&
 			entry.LongContextOutputCostMultiplier == nil &&
 			longContextDerivationEnabled(modelName) {
-			deriveLongContextFromAbove272KFields(pricing)
+			deriveLongContextFromAbove272KFields(modelName, pricing)
 		}
 		if entry.OutputCostPerImage != nil {
 			pricing.OutputCostPerImage = *entry.OutputCostPerImage
@@ -1533,19 +1539,31 @@ func (s *PricingService) generateOpenAIModelVariants(model string, datePattern *
 	return variants
 }
 
+// openAIGPT6FamilyPattern 匹配 GPT-6 家族的目录键：gpt-6、gpt-6-sol、gpt-6-luna、gpt-6-astra、
+// gpt-6.1-sol、gpt-6.1-terra 以及它们的后缀写法；gpt-60、gpt-6o 这类不匹配。
+var openAIGPT6FamilyPattern = regexp.MustCompile(`^gpt-6(?:\.\d+)?(?:-|$)`)
+
 // longContextDerivationEnabled 决定哪些模型在远端目录只给 *_above_272k_tokens 绝对价
-// （没有 long_context_* 字段）时，把绝对价折算成阈值+倍率。目前只有 GPT-6.1 Terra：
-// 其它 GPT-6 模型（gpt-6 / gpt-6-sol / gpt-6.1-sol / gpt-6-luna / gpt-6-astra）是否加价尚未
-// 定，保持现状不折算，扣费不变。以后要给新模型启用，只改这一处。
+// （没有 long_context_* 字段）时，把绝对价折算成阈值+倍率。覆盖整个 GPT-6 家族
+// （2026-11-28 cxw 拍板：gpt-6 系列超过 27.2 万 token 按价格表加价，free 站和 codex 站都生效）。
+// 目录里没有 above 字段的 GPT-6 模型不受影响（折算函数会直接返回）；GPT-5.x 不在范围内：
+// 它们的 above 价由 applyModelSpecificPricingPolicyEx 和显式 long_context_* 字段处理，保持原逻辑。
 func longContextDerivationEnabled(model string) bool {
-	return openai.IsGPT61TerraModelSpelling(model)
+	m := strings.ToLower(strings.TrimSpace(model))
+	if idx := strings.LastIndex(m, "/"); idx >= 0 {
+		m = strings.TrimSpace(m[idx+1:])
+	}
+	m = strings.Join(strings.Fields(strings.ReplaceAll(m, "_", "-")), "-")
+	return openAIGPT6FamilyPattern.MatchString(m)
 }
 
 // deriveLongContextFromAbove272KFields 把 input/output 的 *_above_272k_tokens 绝对价折算成
 // 272K 阈值 + 倍率（above 价 ÷ 基础价），并清掉四个绝对价字段：computeTokenBreakdown 在绝对价
 // >0 时会直接覆盖已选好的 priority 价，priority / flex 的长上下文价必须由倍率叠加得到。
 // cache 读写不单独折算，跟随输入倍率（官方 cache above 档恰为基础价 × 输入倍率）。
-func deriveLongContextFromAbove272KFields(pricing *LiteLLMModelPricing) {
+// 价格表的 cache above ÷ 基础价与输入倍率相对误差超过 1% 时打 warn（仍按输入倍率计费），
+// 比值同时记入 Observed*AboveRatio，让快照 diff 能看到 cache above 价的变化。
+func deriveLongContextFromAbove272KFields(model string, pricing *LiteLLMModelPricing) {
 	if pricing == nil ||
 		pricing.LongContextInputTokenThreshold > 0 ||
 		pricing.LongContextInputCostMultiplier > 0 ||
@@ -1562,6 +1580,24 @@ func deriveLongContextFromAbove272KFields(pricing *LiteLLMModelPricing) {
 	if pricing.OutputCostPerTokenAbove272KTokens > 0 && pricing.OutputCostPerToken > 0 {
 		outputMultiplier = pricing.OutputCostPerTokenAbove272KTokens / pricing.OutputCostPerToken
 	}
+	cacheReadRatio, cacheWriteRatio := 0.0, 0.0
+	if pricing.CacheReadInputTokenCostAbove272KTokens > 0 && pricing.CacheReadInputTokenCost > 0 {
+		cacheReadRatio = pricing.CacheReadInputTokenCostAbove272KTokens / pricing.CacheReadInputTokenCost
+	}
+	if pricing.CacheCreationInputTokenCostAbove272KTokens > 0 && pricing.CacheCreationInputTokenCost > 0 {
+		cacheWriteRatio = pricing.CacheCreationInputTokenCostAbove272KTokens / pricing.CacheCreationInputTokenCost
+	}
+	if cacheRatioDiffers(cacheReadRatio, inputMultiplier) || cacheRatioDiffers(cacheWriteRatio, inputMultiplier) {
+		msg := fmt.Sprintf("[Pricing] %s cache above-272K ratio differs from input multiplier: input_multiplier=%.4f cache_read_ratio=%.4f cache_write_ratio=%.4f (0 = not given); billing follows the input multiplier",
+			model, inputMultiplier, cacheReadRatio, cacheWriteRatio)
+		logger.With(zap.String("component", "service.pricing")).Warn(msg,
+			zap.String("model", model),
+			zap.Float64("input_multiplier", inputMultiplier),
+			zap.Float64("cache_read_ratio", cacheReadRatio),
+			zap.Float64("cache_write_ratio", cacheWriteRatio))
+	}
+	pricing.ObservedCacheReadAboveRatio = cacheReadRatio
+	pricing.ObservedCacheWriteAboveRatio = cacheWriteRatio
 	pricing.LongContextInputTokenThreshold = openAI272KLongContextThreshold
 	pricing.LongContextInputCostMultiplier = inputMultiplier
 	pricing.LongContextOutputCostMultiplier = outputMultiplier
@@ -1569,6 +1605,14 @@ func deriveLongContextFromAbove272KFields(pricing *LiteLLMModelPricing) {
 	pricing.OutputCostPerTokenAbove272KTokens = 0
 	pricing.CacheCreationInputTokenCostAbove272KTokens = 0
 	pricing.CacheReadInputTokenCostAbove272KTokens = 0
+}
+
+// cacheRatioDiffers 判断价格表给出的 cache 倍率（0 表示没给）与输入倍率的相对误差是否超过 1%。
+func cacheRatioDiffers(ratio, inputMultiplier float64) bool {
+	if ratio <= 0 || inputMultiplier <= 0 {
+		return false
+	}
+	return math.Abs(ratio-inputMultiplier)/inputMultiplier > 0.01
 }
 
 // GetStatus 获取服务状态

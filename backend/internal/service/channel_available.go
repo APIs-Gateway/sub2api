@@ -120,6 +120,9 @@ func (s *ChannelService) fillGlobalPricingFallback(models []SupportedModel) {
 	}
 	for i := range models {
 		if !pricingNeedsFallback(models[i].Pricing) {
+			// 渠道/分组配了自定义价：实际扣费会在自定义价上按阈值倍率加价，展示也要给出超阈值那一档。
+			models[i].Pricing = withLongContextTierForCustomPricing(
+				models[i].Pricing, s.pricingService.GetModelPricing(models[i].Name), models[i].Name)
 			continue
 		}
 		lp := s.pricingService.GetModelPricing(models[i].Name)
@@ -149,6 +152,58 @@ func pricingNeedsFallback(p *ChannelModelPricing) bool {
 		}
 	}
 	return true
+}
+
+// withLongContextTierForCustomPricing 给「配了自定义 token 价、没配区间」的模型补上超阈值那一档（仅展示）。
+// 口径与计费一致：基础档是自定义价；超阈值档在自定义价上乘该模型的长上下文倍率，目录里
+// 显式给了 *_above_272k_tokens 绝对价的项（如 GPT-5.6）计费时直接用目录价，这里同样展示目录价。
+// 自定义价没填的项不展示。已有有效区间、按次/图片模式、或模型没有长上下文规则时原样返回；
+// 不修改入参（渠道缓存里的定价是共享的）。
+func withLongContextTierForCustomPricing(p *ChannelModelPricing, lp *LiteLLMModelPricing, modelName string) *ChannelModelPricing {
+	if p == nil || lp == nil {
+		return p
+	}
+	if p.BillingMode != "" && p.BillingMode != BillingModeToken {
+		return p
+	}
+	if len(filterValidIntervals(p.Intervals)) > 0 {
+		return p
+	}
+	if p.InputPrice == nil && p.OutputPrice == nil && p.CacheWritePrice == nil && p.CacheReadPrice == nil {
+		return p
+	}
+	val := func(v *float64) float64 {
+		if v == nil {
+			return 0
+		}
+		return *v
+	}
+	// shadow 只用来借 longContextDisplayIntervals 的阈值/倍率/显式价规则：基础价换成自定义价，
+	// 没填自定义价的项连同它的显式 above 价一起清掉。
+	shadow := *lp
+	shadow.InputCostPerToken = val(p.InputPrice)
+	shadow.OutputCostPerToken = val(p.OutputPrice)
+	shadow.CacheCreationInputTokenCost = val(p.CacheWritePrice)
+	shadow.CacheReadInputTokenCost = val(p.CacheReadPrice)
+	if p.InputPrice == nil {
+		shadow.InputCostPerTokenAbove272KTokens = 0
+	}
+	if p.OutputPrice == nil {
+		shadow.OutputCostPerTokenAbove272KTokens = 0
+	}
+	if p.CacheWritePrice == nil {
+		shadow.CacheCreationInputTokenCostAbove272KTokens = 0
+	}
+	if p.CacheReadPrice == nil {
+		shadow.CacheReadInputTokenCostAbove272KTokens = 0
+	}
+	intervals := longContextDisplayIntervals(&shadow, modelName)
+	if len(intervals) == 0 {
+		return p
+	}
+	cloned := *p
+	cloned.Intervals = intervals
+	return &cloned
 }
 
 // synthesizePricingFromLiteLLM 把 LiteLLM 的定价数据转成 ChannelModelPricing 形态，
@@ -277,6 +332,12 @@ func longContextDisplayIntervals(lp *LiteLLMModelPricing, modelName string) []Pr
 		}
 		cacheReadMult = tier.cacheReadMultiplier
 		cacheWriteMult = tier.cacheWriteMultiplier
+	}
+	// GPT-6 家族由目录折算而来（cache 的 above 价已清掉，计费时跟随输入倍率），展示也要跟随，
+	// 否则 gpt-6-luna 等的长上下文档会缺 cache 价。
+	if cacheReadMult <= 0 && inMult > 0 && longContextDerivationEnabled(modelName) {
+		cacheReadMult = inMult
+		cacheWriteMult = inMult
 	}
 	if threshold <= 0 && hasExplicit272KPrices {
 		threshold = openAI272KLongContextThreshold
