@@ -63,6 +63,15 @@ func (r *fakePtsRepo) GrantSignupReward(context.Context, service.SignupRewardInp
 	return false, nil
 }
 
+// 下面两个只服务于「被邀请人消费达标后发注册奖励」的后台扫描，本组用例不走那条路径。
+func (r *fakePtsRepo) ListSignupRewardCandidates(context.Context, time.Time, int64, int) ([]service.SignupRewardCandidate, error) {
+	return nil, nil
+}
+
+func (r *fakePtsRepo) SumUsageActualCost(context.Context, []int64) ([]service.UsageCostSum, error) {
+	return nil, nil
+}
+
 func (r *fakePtsRepo) EarnPoints(ctx context.Context, in service.EarnPointsInput) (bool, error) {
 	return true, nil
 }

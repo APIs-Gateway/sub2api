@@ -360,7 +360,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	authCacheInvalidationWorker := service.ProvideAuthCacheInvalidationWorker(authCacheInvalidationOutboxRepository, apiKeyCache, apiKeyService)
 	opsIngressRejectAggregator := service.ProvideOpsIngressRejectAggregator(opsRepository, opsService)
 	promoSettingsRefresher := service.ProvidePromoSettingsRefresher(settingRepository)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, claudeCodeVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, authCacheInvalidationWorker, opsIngressRejectAggregator, promptService, upstreamBillingProbeService, adminAuditWriter, promoSettingsRefresher)
+	affiliateSignupRewardSweeper := service.ProvideAffiliateSignupRewardSweeper(pointsService, leaderLockCache, db)
+	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, claudeCodeVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, authCacheInvalidationWorker, opsIngressRejectAggregator, promptService, upstreamBillingProbeService, adminAuditWriter, promoSettingsRefresher, affiliateSignupRewardSweeper)
 	application := &Application{
 		Server:      httpServer,
 		PromptAudit: promptService,
@@ -427,6 +428,7 @@ func provideCleanup(
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	adminAuditWriter *service.AdminAuditWriter,
 	promoRefresher *service.PromoSettingsRefresher,
+	signupRewardSweeper *service.AffiliateSignupRewardSweeper,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -621,6 +623,12 @@ func provideCleanup(
 			{"PromoSettingsRefresher", func() error {
 				if promoRefresher != nil {
 					promoRefresher.Stop()
+				}
+				return nil
+			}},
+			{"AffiliateSignupRewardSweeper", func() error {
+				if signupRewardSweeper != nil {
+					signupRewardSweeper.Stop()
 				}
 				return nil
 			}},

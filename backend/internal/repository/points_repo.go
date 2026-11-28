@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
 // pointsRepository 邀请返利积分制（issue #11）仓储实现：原始 SQL + 事务原子 + partial-unique 幂等。
@@ -167,6 +169,16 @@ func (r *pointsRepository) GrantSignupReward(ctx context.Context, in service.Sig
 	}
 	var applied bool
 	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		// 邀请人必须是有效账号：被封禁或已删除的邀请人不发。注册即发和消费达标后发两条路径都经过这里。
+		active, err := scanInt64(txCtx, txClient, `
+SELECT COUNT(*) FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'`, in.InviterID)
+		if err != nil {
+			return fmt.Errorf("check inviter active: %w", err)
+		}
+		if active == 0 {
+			applied = false
+			return nil
+		}
 		if _, err := txClient.ExecContext(txCtx, `
 INSERT INTO user_points_accounts (user_id, created_at, updated_at)
 VALUES ($1, NOW(), NOW()) ON CONFLICT (user_id) DO NOTHING`, in.InviterID); err != nil {
@@ -206,6 +218,113 @@ WHERE kind = 'signup_reward' AND source_user_id = $3`, avail, frozen, in.SourceU
 		return nil
 	})
 	return applied, err
+}
+
+// signupRewardSweepStatementTimeout 是后台扫描里每条只读查询的语句超时。
+// 一条慢查询最多占用连接这么久，不会把扫描、也不会把连接池拖死。
+const signupRewardSweepStatementTimeout = "15s"
+
+// readOnlyWithTimeout 在一个短事务里设 SET LOCAL statement_timeout 后执行只读查询。
+func (r *pointsRepository) readOnlyWithTimeout(ctx context.Context, fn func(ctx context.Context, c *dbent.Client) error) error {
+	return r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		if _, err := txClient.ExecContext(txCtx, "SET LOCAL statement_timeout = '"+signupRewardSweepStatementTimeout+"'"); err != nil {
+			return fmt.Errorf("set statement_timeout: %w", err)
+		}
+		return fn(txCtx, txClient)
+	})
+}
+
+// ListSignupRewardCandidates 列出「已绑定邀请人、注册奖励还没发」的被邀请人（keyset 分页）。
+//
+// 只读、不加锁、带语句超时。条件：
+//   - users.created_at >= since：只看生效起点之后注册的人，历史邀请关系不会被补发。
+//     用 users.created_at 而不是 user_affiliates.updated_at，后者会被别的更新改掉。
+//   - 被邀请人和邀请人都没软删、状态 active：封禁或删除的邀请人不发。
+//   - NOT EXISTS 命中 idx_user_points_ledger_signup_reward_uniq（partial unique on source_user_id），
+//     与发放时的幂等键同一个口径，所以「列出来的」和「真正还能发的」不会分叉。
+func (r *pointsRepository) ListSignupRewardCandidates(ctx context.Context, since time.Time, afterInviteeID int64, limit int) ([]service.SignupRewardCandidate, error) {
+	if limit <= 0 || since.IsZero() {
+		return nil, nil
+	}
+	out := make([]service.SignupRewardCandidate, 0, limit)
+	err := r.readOnlyWithTimeout(ctx, func(txCtx context.Context, client *dbent.Client) error {
+		rows, err := client.QueryContext(txCtx, `
+SELECT ua.user_id, ua.inviter_id
+FROM user_affiliates ua
+JOIN users u   ON u.id   = ua.user_id    AND u.deleted_at   IS NULL AND u.status   = 'active'
+JOIN users inv ON inv.id = ua.inviter_id AND inv.deleted_at IS NULL AND inv.status = 'active'
+WHERE ua.inviter_id IS NOT NULL
+  AND ua.inviter_id <> ua.user_id
+  AND ua.user_id > $1
+  AND u.created_at >= $2
+  AND NOT EXISTS (
+      SELECT 1 FROM user_points_ledger l
+      WHERE l.kind = 'signup_reward' AND l.source_user_id = ua.user_id
+  )
+ORDER BY ua.user_id
+LIMIT $3`, afterInviteeID, since.UTC(), limit)
+		if err != nil {
+			return fmt.Errorf("list signup reward candidates: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var c service.SignupRewardCandidate
+			if err := rows.Scan(&c.InviteeID, &c.InviterID); err != nil {
+				return fmt.Errorf("scan signup reward candidate: %w", err)
+			}
+			out = append(out, c)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate signup reward candidates: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SumUsageActualCost 批量取用户在 usage_logs 里的累计实际消费（actual_cost 之和），按 cost_unit 分开。
+//
+// 这是「累计实际消费」的口径来源：仓库里没有现成的 users 级累计消费列
+// （只有 total_recharged 记充值），而 actual_cost 是用户在「使用统计」里看到的总消费、
+// 也是旧站邀请领码判断消费达标时用的同一个字段。
+// 额度行（cost_unit 为 NULL）与人民币行（cost_unit=1）分开求和，换算成站点当前单位由 service 层
+// 用 CreditUnit 完成——这里不做任何除数。
+// 只在后台扫描里调用，一次一批用户、走 (user_id, created_at) 索引，带语句超时，
+// 绝不在请求结算路径上调用。只能看到 usage_logs 保留期内（默认 90 天）的消费。
+func (r *pointsRepository) SumUsageActualCost(ctx context.Context, userIDs []int64) ([]service.UsageCostSum, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	var out []service.UsageCostSum
+	err := r.readOnlyWithTimeout(ctx, func(txCtx context.Context, client *dbent.Client) error {
+		rows, err := client.QueryContext(txCtx, `
+SELECT user_id, (COALESCE(cost_unit, 0) = 1) AS is_cny, COALESCE(SUM(actual_cost), 0)::double precision
+FROM usage_logs
+WHERE user_id = ANY($1)
+GROUP BY user_id, (COALESCE(cost_unit, 0) = 1)`, pq.Array(userIDs))
+		if err != nil {
+			return fmt.Errorf("sum usage actual cost: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var sum service.UsageCostSum
+			if err := rows.Scan(&sum.UserID, &sum.CostUnitCNY, &sum.ActualCost); err != nil {
+				return fmt.Errorf("scan usage actual cost: %w", err)
+			}
+			out = append(out, sum)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate usage actual cost: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *pointsRepository) ClawbackByOrder(ctx context.Context, sourceOrderID int64, refundAmount, originalAmount float64) (int64, error) {

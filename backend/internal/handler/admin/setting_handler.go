@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"html"
 	"log/slog"
+	"math"
 	"net/http"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -255,6 +257,10 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		AffiliateWeeklyInviteLimit:             settings.AffiliateWeeklyInviteLimit,
 		AffiliateSignupRewardEnabled:           settings.AffiliateSignupRewardEnabled,
 		AffiliateSignupRewardAmount:            settings.AffiliateSignupRewardAmount,
+		AffiliateSignupRewardMinSpend:          settings.AffiliateSignupRewardMinSpend,
+		AffiliateSignupRewardMinSpendSince:     settings.AffiliateSignupRewardMinSpendSince,
+		CreditCurrency:                         string(service.CurrentCreditUnit().Currency),
+		CreditLegacyDivisor:                    service.CurrentCreditUnit().LegacyDivisor,
 		AffiliateCodeAdmitsSignup:              settings.AffiliateCodeAdmitsSignup,
 		DefaultUserRPMLimit:                    settings.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   defaultSubscriptions,
@@ -575,6 +581,8 @@ type UpdateSettingsRequest struct {
 	AffiliateWeeklyInviteLimit                *int                              `json:"affiliate_weekly_invite_limit"`
 	AffiliateSignupRewardEnabled              *bool                             `json:"affiliate_signup_reward_enabled"`
 	AffiliateSignupRewardAmount               *int64                            `json:"affiliate_signup_reward_amount"`
+	AffiliateSignupRewardMinSpend             *float64                          `json:"affiliate_signup_reward_min_spend"`
+	AffiliateSignupRewardMinSpendSince        *string                           `json:"affiliate_signup_reward_min_spend_since"`
 	AffiliateCodeAdmitsSignup                 *bool                             `json:"affiliate_code_admits_signup"`
 	DefaultUserRPMLimit                       int                               `json:"default_user_rpm_limit"`
 	DefaultSubscriptions                      []dto.DefaultSubscriptionSetting  `json:"default_subscriptions"`
@@ -872,6 +880,34 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	if affiliateSignupRewardAmount > service.AffiliateSignupRewardAmountMax {
 		affiliateSignupRewardAmount = service.AffiliateSignupRewardAmountMax
+	}
+	affiliateSignupRewardMinSpend := previousSettings.AffiliateSignupRewardMinSpend
+	if req.AffiliateSignupRewardMinSpend != nil {
+		affiliateSignupRewardMinSpend = *req.AffiliateSignupRewardMinSpend
+	}
+	if affiliateSignupRewardMinSpend < 0 || math.IsNaN(affiliateSignupRewardMinSpend) || math.IsInf(affiliateSignupRewardMinSpend, 0) {
+		affiliateSignupRewardMinSpend = service.AffiliateSignupRewardMinSpendDefault
+	}
+	if affiliateSignupRewardMinSpend > service.AffiliateSignupRewardMinSpendMax {
+		affiliateSignupRewardMinSpend = service.AffiliateSignupRewardMinSpendMax
+	}
+	// 门槛模式的生效起点：缺省沿用当前值；管理员可手动改（RFC3339，存成 UTC）。
+	// 把门槛从 0 改成 >0 而起点仍为空时，自动写入当前时刻——这样历史邀请关系不会被补发，
+	// 只有从现在起注册的被邀请人才按消费门槛发放。
+	affiliateSignupRewardMinSpendSince, sinceOK := service.NormalizeSignupRewardSince(previousSettings.AffiliateSignupRewardMinSpendSince)
+	if !sinceOK {
+		affiliateSignupRewardMinSpendSince = ""
+	}
+	if req.AffiliateSignupRewardMinSpendSince != nil {
+		normalized, ok := service.NormalizeSignupRewardSince(*req.AffiliateSignupRewardMinSpendSince)
+		if !ok {
+			response.BadRequest(c, "affiliate_signup_reward_min_spend_since must be an RFC3339 timestamp (e.g. 2026-11-28T14:01:00Z) or empty")
+			return
+		}
+		affiliateSignupRewardMinSpendSince = normalized
+	}
+	if previousSettings.AffiliateSignupRewardMinSpend <= 0 && affiliateSignupRewardMinSpend > 0 && affiliateSignupRewardMinSpendSince == "" {
+		affiliateSignupRewardMinSpendSince = time.Now().UTC().Format(time.RFC3339)
 	}
 	affiliateCodeAdmitsSignup := previousSettings.AffiliateCodeAdmitsSignup
 	if req.AffiliateCodeAdmitsSignup != nil {
@@ -1794,6 +1830,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateWeeklyInviteLimit:             affiliateWeeklyInviteLimit,
 		AffiliateSignupRewardEnabled:           affiliateSignupRewardEnabled,
 		AffiliateSignupRewardAmount:            affiliateSignupRewardAmount,
+		AffiliateSignupRewardMinSpend:          affiliateSignupRewardMinSpend,
+		AffiliateSignupRewardMinSpendSince:     affiliateSignupRewardMinSpendSince,
 		AffiliateCodeAdmitsSignup:              affiliateCodeAdmitsSignup,
 		SignupSourceEnabled:                    signupSourceEnabled,
 		DefaultUserRPMLimit:                    req.DefaultUserRPMLimit,
@@ -2342,6 +2380,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateWeeklyInviteLimit:             updatedSettings.AffiliateWeeklyInviteLimit,
 		AffiliateSignupRewardEnabled:           updatedSettings.AffiliateSignupRewardEnabled,
 		AffiliateSignupRewardAmount:            updatedSettings.AffiliateSignupRewardAmount,
+		AffiliateSignupRewardMinSpend:          updatedSettings.AffiliateSignupRewardMinSpend,
+		AffiliateSignupRewardMinSpendSince:     updatedSettings.AffiliateSignupRewardMinSpendSince,
+		CreditCurrency:                         string(service.CurrentCreditUnit().Currency),
+		CreditLegacyDivisor:                    service.CurrentCreditUnit().LegacyDivisor,
 		AffiliateCodeAdmitsSignup:              updatedSettings.AffiliateCodeAdmitsSignup,
 		DefaultUserRPMLimit:                    updatedSettings.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   updatedDefaultSubscriptions,
@@ -2991,6 +3033,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.AffiliateSignupRewardAmount != after.AffiliateSignupRewardAmount {
 		changed = append(changed, "affiliate_signup_reward_amount")
+	}
+	if before.AffiliateSignupRewardMinSpend != after.AffiliateSignupRewardMinSpend {
+		changed = append(changed, "affiliate_signup_reward_min_spend")
+	}
+	if before.AffiliateSignupRewardMinSpendSince != after.AffiliateSignupRewardMinSpendSince {
+		changed = append(changed, "affiliate_signup_reward_min_spend_since")
 	}
 	if before.AffiliateCodeAdmitsSignup != after.AffiliateCodeAdmitsSignup {
 		changed = append(changed, "affiliate_code_admits_signup")

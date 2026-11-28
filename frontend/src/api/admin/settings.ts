@@ -391,6 +391,14 @@ export interface SystemSettings {
   affiliate_signup_reward_enabled: boolean;
   /** 上述奖励的积分数（0=不发放） */
   affiliate_signup_reward_amount: number;
+  /** 被邀请人累计实际消费达到该值后才给邀请人发注册奖励（站点当前计费单位；0=注册绑定即发） */
+  affiliate_signup_reward_min_spend: number;
+  /** 门槛模式的生效起点（RFC3339，UTC）。空=不扫描；只统计此刻之后注册的被邀请人 */
+  affiliate_signup_reward_min_spend_since: string;
+  /** 站点当前记账单位（USD / CNY），只读，用来决定金额类设置显示 $ 还是 ¥ */
+  credit_currency?: "USD" | "CNY";
+  /** 历史额度换人民币的除数（codex 站 13，free 站 1），只读 */
+  credit_legacy_divisor?: number;
   affiliate_code_admits_signup: boolean;
   default_concurrency: number;
   default_user_rpm_limit: number;
@@ -691,6 +699,8 @@ export interface UpdateSettingsRequest {
   affiliate_weekly_invite_limit?: number;
   affiliate_signup_reward_enabled?: boolean;
   affiliate_signup_reward_amount?: number;
+  affiliate_signup_reward_min_spend?: number;
+  affiliate_signup_reward_min_spend_since?: string;
   affiliate_code_admits_signup?: boolean;
   default_concurrency?: number;
   default_user_rpm_limit?: number;

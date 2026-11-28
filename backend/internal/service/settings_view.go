@@ -164,6 +164,12 @@ type SystemSettings struct {
 	AffiliateSignupRewardEnabled bool
 	// AffiliateSignupRewardAmount 是上述奖励的积分数（0=不发放）
 	AffiliateSignupRewardAmount int64
+	// AffiliateSignupRewardMinSpend 是被邀请人累计实际消费（usage_logs.actual_cost 之和，
+	// 与站点当前计费单位一致）达到多少后才给邀请人发注册奖励。0 = 注册绑定成功即发。
+	AffiliateSignupRewardMinSpend float64
+	// AffiliateSignupRewardMinSpendSince 是门槛模式的生效起点（RFC3339 UTC）。空 = 扫描不工作；
+	// 管理端把门槛从 0 改成 >0 且该值为空时自动写入当前时间。只扫描此刻之后注册的被邀请人。
+	AffiliateSignupRewardMinSpendSince string
 	// AffiliateCodeAdmitsSignup 决定「邀请人邀请码」本身能不能放行一次注册。
 	// 注册码开关打开时，站点只有管理员发得出注册码，普通用户手上的邀请链接根本带不进人，
 	// 邀请奖励和每周邀请上限也就永远不会触发。打开这个开关后，填了有效邀请人邀请码的人

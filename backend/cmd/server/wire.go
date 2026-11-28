@@ -111,6 +111,7 @@ func provideCleanup(
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	adminAuditWriter *service.AdminAuditWriter,
 	promoRefresher *service.PromoSettingsRefresher,
+	signupRewardSweeper *service.AffiliateSignupRewardSweeper,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -306,6 +307,12 @@ func provideCleanup(
 			{"PromoSettingsRefresher", func() error {
 				if promoRefresher != nil {
 					promoRefresher.Stop()
+				}
+				return nil
+			}},
+			{"AffiliateSignupRewardSweeper", func() error {
+				if signupRewardSweeper != nil {
+					signupRewardSweeper.Stop()
 				}
 				return nil
 			}},

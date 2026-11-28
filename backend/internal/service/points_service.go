@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/shopspring/decimal"
 )
 
 // 提现收款字段长度上限（纯文本，无文件上传）。
@@ -44,6 +45,9 @@ type PointsService struct {
 	affiliateService     *AffiliateService
 	authCacheInvalidator APIKeyAuthCacheInvalidator
 	billingCacheService  *BillingCacheService
+
+	// creditUnitFn 返回换算累计消费用的记账单位；nil = 进程级的 CurrentCreditUnit()。只有测试会注入。
+	creditUnitFn func() CreditUnit
 }
 
 func NewPointsService(
@@ -282,17 +286,35 @@ func (s *PointsService) AccrueEarnForRedeem(ctx context.Context, inviteeUserID i
 
 // AccrueSignupReward 在被邀请人完成注册并绑定邀请人后，给邀请人发一笔固定积分。
 //
-// 与 AccrueEarnForOrder / AccrueEarnForRedeem 的根本区别是它不看被邀请人花了多少钱——
-// 触发条件就是「有一个新用户通过你的邀请码注册成功」，金额取自站点配置的固定值。
+// 与 AccrueEarnForOrder / AccrueEarnForRedeem 的根本区别是它不看被邀请人付了多少钱——
+// 金额取自站点配置的固定值。
+//
+// 触发时机取决于 affiliate_signup_reward_min_spend：
+//   - 0（默认）：注册绑定成功就发，也就是本函数被注册流程调用的这一刻；
+//   - >0：这里什么都不发，奖励改由 SweepSignupRewards 的后台扫描在被邀请人累计实际消费
+//     达到门槛后发放。注册流程里不查任何消费数据，热路径不增加一次聚合查询。
 //
 // 返回实际发放的积分数。积分总开关关闭、奖励开关关闭、配置金额为 0、
-// 该用户没有邀请人、或这个被邀请人已经发过奖励，都返回 0 且不报错——
-// 这些都是正常状态，不是异常。
+// 门槛 >0（留给后台扫描）、该用户没有邀请人、或这个被邀请人已经发过奖励，
+// 都返回 0 且不报错——这些都是正常状态，不是异常。
+// 唯一的例外：读门槛设置失败（库出错、值写坏）返回 error 且不发——不能把读失败当成「没有门槛」，
+// 而且这一笔不会被补发（见函数体内注释）。
 func (s *PointsService) AccrueSignupReward(ctx context.Context, inviteeUserID int64) (int64, error) {
 	if s == nil || inviteeUserID <= 0 || s.affiliateService == nil || s.settingService == nil {
 		return 0, nil
 	}
 	if !s.IsEnabled(ctx) || !s.settingService.GetAffiliateSignupRewardEnabled(ctx) {
+		return 0, nil
+	}
+	minSpend, err := s.settingService.GetAffiliateSignupRewardMinSpend(ctx)
+	if err != nil {
+		// 读不到门槛不能当成「没有门槛」：那会把「消费满才发」悄悄退回成「注册即发」。
+		// 这次不发。注意：这一笔不会被补发——门槛为 0（或读不出来）时后台扫描不工作，
+		// 门槛 >0 时扫描也只认 since 之后注册、且还没有奖励流水的人，所以此刻因读设置失败
+		// 漏掉的「注册即发」奖励需要人工处理。这是接受下来的行为：宁可漏发一笔，也不能错发。
+		return 0, err
+	}
+	if minSpend > 0 {
 		return 0, nil
 	}
 	pts := s.settingService.GetAffiliateSignupRewardAmount(ctx)
@@ -306,10 +328,16 @@ func (s *PointsService) AccrueSignupReward(ctx context.Context, inviteeUserID in
 	if invitee == nil || invitee.InviterID == nil || *invitee.InviterID <= 0 || *invitee.InviterID == inviteeUserID {
 		return 0, nil
 	}
-	inviterID := *invitee.InviterID
+	return s.grantSignupReward(ctx, *invitee.InviterID, inviteeUserID, pts)
+}
+
+// grantSignupReward 是「注册即发」和「消费达标后发」共用的记账步骤：
+// 走同一个 repo.GrantSignupReward（积分流水 kind='signup_reward'、按被邀请人幂等的唯一索引），
+// 不另写一套。奖励直接进可用余额、不冻结，这点与改动前一致。
+func (s *PointsService) grantSignupReward(ctx context.Context, inviterID, inviteeID, pts int64) (int64, error) {
 	applied, err := s.repo.GrantSignupReward(ctx, SignupRewardInput{
 		InviterID:    inviterID,
-		SourceUserID: inviteeUserID,
+		SourceUserID: inviteeID,
 		Points:       pts,
 		PegAt:        s.peg(ctx),
 	})
@@ -318,6 +346,160 @@ func (s *PointsService) AccrueSignupReward(ctx context.Context, inviteeUserID in
 	}
 	s.invalidateCaches(ctx, inviterID)
 	return pts, nil
+}
+
+// signupRewardSweepSpendEpsilon 容忍 decimal→float 换算带来的末位误差，避免恰好等于门槛的消费被漏掉。
+const signupRewardSweepSpendEpsilon = 1e-9
+
+// signupRewardSweepMaxFallbackFailures 是「整批求和失败后逐人重查」时允许连续失败的人数。
+// 数据库整体不可用时每个人都会失败，不能让一批 200 人各自等满一次超时。
+const signupRewardSweepMaxFallbackFailures = 3
+
+func (s *PointsService) currentCreditUnit() CreditUnit {
+	if s.creditUnitFn != nil {
+		return s.creditUnitFn()
+	}
+	return CurrentCreditUnit()
+}
+
+// spendInCurrentUnit 把按 cost_unit 分开的累计消费逐行换算成站点当前单位后按用户汇总。
+// 换算完全复用 CreditUnit.UsageAmountToCurrent，这里不出现任何除数。
+func (s *PointsService) spendInCurrentUnit(sums []UsageCostSum) map[int64]float64 {
+	unit := s.currentCreditUnit()
+	acc := make(map[int64]decimal.Decimal, len(sums))
+	for _, row := range sums {
+		if math.IsNaN(row.ActualCost) || math.IsInf(row.ActualCost, 0) {
+			continue
+		}
+		var costUnit *int16
+		if row.CostUnitCNY {
+			v := UsageLogCostUnitCNY
+			costUnit = &v
+		}
+		acc[row.UserID] = acc[row.UserID].Add(unit.UsageAmountToCurrent(decimal.NewFromFloat(row.ActualCost), costUnit))
+	}
+	out := make(map[int64]float64, len(acc))
+	for id, v := range acc {
+		out[id] = v.InexactFloat64()
+	}
+	return out
+}
+
+// SweepSignupRewards 扫一批「已绑定邀请人、奖励未发」的被邀请人，累计实际消费达到
+// affiliate_signup_reward_min_spend 的发一次奖励。
+//
+// 参数 afterInviteeID 是 keyset 游标（只看 id 更大的被邀请人），返回值 next 是下一轮的游标；
+// 扫到末尾（本批不满 limit）时 next 回绕为 0，让还没达标的人下一轮重新被看到。
+// 每批最多处理 limit 个被邀请人，累计消费用一条带 user_id = ANY(...) 的只读聚合取完，
+// 不加锁、不碰请求结算路径。
+//
+// 以下任何一项不满足都直接返回，什么都不发、不查消费：积分总开关、奖励开关、金额 > 0、
+// 门槛 > 0、生效起点 since 非空且合法。读设置出错同样不发。
+// 只扫 users.created_at >= since 的被邀请人，历史邀请关系不会因为开了门槛而被补发。
+// 开关关闭期间不发，重新打开后下一轮会把「since 之后注册、已达标、从没发过」的人补发出去。
+// 门槛为 0 时本函数不工作：那是「注册即发」模式。
+//
+// 一批求和失败时降级成逐人查询：单人失败就跳过，游标照常推进到本批末尾，
+// 绝不停在原地反复重跑同一批。只有名单查询本身失败才返回 error（游标不动）。
+func (s *PointsService) SweepSignupRewards(ctx context.Context, afterInviteeID int64, limit int) (next int64, granted int, err error) {
+	if s == nil || s.settingService == nil || s.repo == nil || limit <= 0 {
+		return 0, 0, nil
+	}
+	if !s.IsEnabled(ctx) || !s.settingService.GetAffiliateSignupRewardEnabled(ctx) {
+		return 0, 0, nil
+	}
+	minSpend, err := s.settingService.GetAffiliateSignupRewardMinSpend(ctx)
+	if err != nil {
+		return afterInviteeID, 0, err
+	}
+	if minSpend <= 0 {
+		return 0, 0, nil
+	}
+	since, err := s.settingService.GetAffiliateSignupRewardMinSpendSince(ctx)
+	if err != nil {
+		return afterInviteeID, 0, err
+	}
+	if since.IsZero() {
+		return 0, 0, nil
+	}
+	pts := s.settingService.GetAffiliateSignupRewardAmount(ctx)
+	if pts <= 0 {
+		return 0, 0, nil
+	}
+
+	candidates, err := s.repo.ListSignupRewardCandidates(ctx, since, afterInviteeID, limit)
+	if err != nil {
+		return afterInviteeID, 0, err
+	}
+	if len(candidates) == 0 {
+		return 0, 0, nil
+	}
+	next = candidates[len(candidates)-1].InviteeID
+	if len(candidates) < limit {
+		next = 0
+	}
+
+	ids := make([]int64, 0, len(candidates))
+	for _, c := range candidates {
+		ids = append(ids, c.InviteeID)
+	}
+	var spent map[int64]float64
+	sums, sumErr := s.repo.SumUsageActualCost(ctx, ids)
+	if sumErr == nil {
+		spent = s.spendInCurrentUnit(sums)
+	} else {
+		logger.LegacyPrintf("service.points", "[SignupRewardSweep] batch usage sum failed (%d invitees), falling back to one-by-one: %v", len(ids), sumErr)
+		spent = s.sumSpendOneByOne(ctx, ids)
+	}
+
+	for _, c := range candidates {
+		if c.InviteeID <= 0 || c.InviterID <= 0 || c.InviterID == c.InviteeID {
+			continue
+		}
+		cost, known := spent[c.InviteeID]
+		if !known {
+			if sumErr == nil {
+				cost = 0 // 整批成功而没有出现 = 没有用量
+			} else {
+				continue // 逐人重查也失败的人本轮跳过，游标照常前进，下一圈再看
+			}
+		}
+		if cost+signupRewardSweepSpendEpsilon < minSpend {
+			continue
+		}
+		got, gerr := s.grantSignupReward(ctx, c.InviterID, c.InviteeID, pts)
+		if gerr != nil {
+			// 单个失败只记日志，不拦住同批其他人，也不让游标卡在这一批上；
+			// 流水没落库，下一轮绕回来时还会再看到这个被邀请人。
+			logger.LegacyPrintf("service.points", "[SignupRewardSweep] grant failed for invitee %d: %v", c.InviteeID, gerr)
+			continue
+		}
+		if got > 0 {
+			granted++
+		}
+	}
+	return next, granted, nil
+}
+
+// sumSpendOneByOne 在整批求和失败后逐人重查。返回里只有查成功的人（没有用量的人记为 0）。
+// 连续失败 signupRewardSweepMaxFallbackFailures 次或 ctx 已结束就放弃剩下的，不为每个人各等一次超时。
+func (s *PointsService) sumSpendOneByOne(ctx context.Context, ids []int64) map[int64]float64 {
+	out := make(map[int64]float64, len(ids))
+	failures := 0
+	for _, id := range ids {
+		if ctx.Err() != nil || failures >= signupRewardSweepMaxFallbackFailures {
+			break
+		}
+		sums, err := s.repo.SumUsageActualCost(ctx, []int64{id})
+		if err != nil {
+			failures++
+			logger.LegacyPrintf("service.points", "[SignupRewardSweep] usage sum failed for invitee %d, skipped: %v", id, err)
+			continue
+		}
+		failures = 0
+		out[id] = s.spendInCurrentUnit(sums)[id]
+	}
+	return out
 }
 
 // ClawbackForOrder 退款撤回积分（仅由退款最终落单点调用）。按实退比例 floor 撤、可转负、一单一撤幂等。
@@ -626,11 +808,19 @@ type PointsPublicConfig struct {
 	WithdrawUSDCNYRate float64 `json:"withdraw_usd_cny_rate"`
 	RedeemBalanceOn    bool    `json:"redeem_balance_on"`
 	RedeemPlanOn       bool    `json:"redeem_plan_on"`
+
+	// 邀请注册奖励（用户端「邀请奖励」说明用）。SignupRewardAmount 为 0 或开关关闭时前端不展示。
+	// SignupRewardMinSpend 为 0 表示注册绑定即发，>0 表示被邀请人累计消费满该金额后才发。
+	SignupRewardEnabled  bool    `json:"signup_reward_enabled"`
+	SignupRewardAmount   int64   `json:"signup_reward_amount"`
+	SignupRewardMinSpend float64 `json:"signup_reward_min_spend"`
 }
 
 // PublicConfig 返回用户端规则展示所需配置。
 func (s *PointsService) PublicConfig(ctx context.Context) PointsPublicConfig {
 	st := s.settingService.GetPointsSettings(ctx)
+	// 展示用：读不到门槛时按 0（不单独展示这条说明），不影响真正的发放判断。
+	signupRewardMinSpendForDisplay, _ := s.settingService.GetAffiliateSignupRewardMinSpend(ctx)
 	return PointsPublicConfig{
 		Enabled:            st.Enabled,
 		Peg:                st.Peg,
@@ -641,6 +831,10 @@ func (s *PointsService) PublicConfig(ctx context.Context) PointsPublicConfig {
 		WithdrawUSDCNYRate: st.WithdrawUSDCNYRate,
 		RedeemBalanceOn:    st.RedeemBalanceOn,
 		RedeemPlanOn:       st.RedeemPlanOn,
+
+		SignupRewardEnabled:  s.settingService.GetAffiliateSignupRewardEnabled(ctx),
+		SignupRewardAmount:   s.settingService.GetAffiliateSignupRewardAmount(ctx),
+		SignupRewardMinSpend: signupRewardMinSpendForDisplay,
 	}
 }
 

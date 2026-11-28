@@ -246,6 +246,15 @@ func ProvidePromoSettingsRefresher(settingRepo SettingRepository) *PromoSettings
 	return svc
 }
 
+// ProvideAffiliateSignupRewardSweeper 创建并启动「被邀请人累计消费达标后发注册奖励」的后台扫描器。
+// 门槛为 0 时扫描每轮直接返回，不查库。
+func ProvideAffiliateSignupRewardSweeper(points *PointsService, lockCache LeaderLockCache, db *sql.DB) *AffiliateSignupRewardSweeper {
+	svc := NewAffiliateSignupRewardSweeper(points, signupRewardSweepInterval)
+	svc.SetLeaderLock(lockCache, db)
+	svc.Start()
+	return svc
+}
+
 // ProvideTimingWheelService creates and starts TimingWheelService
 func ProvideTimingWheelService() (*TimingWheelService, error) {
 	svc, err := NewTimingWheelService()
@@ -715,6 +724,7 @@ var ProviderSet = wire.NewSet(
 	ProvideProxyExpiryService,
 	ProvideSubscriptionExpiryService,
 	ProvidePromoSettingsRefresher,
+	ProvideAffiliateSignupRewardSweeper,
 	ProvideTimingWheelService,
 	ProvideDashboardAggregationService,
 	ProvideUsageCleanupService,
