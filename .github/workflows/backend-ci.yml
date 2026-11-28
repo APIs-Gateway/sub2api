@@ -162,7 +162,7 @@ jobs:
           cache: false
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.6'
+          go version | grep -q 'go1.26.11'
       # 模块缓存 + 编译缓存,按分片分 key(每片编译的 tags/-race/-cover 组合不同)。
       # 只有 main 的 push 负责保存,PR 只读 main 的缓存,避免每个 PR 推送都写 GB 级缓存把 10GB 配额冲掉。
       - name: Restore Go module and build cache
@@ -294,7 +294,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.6'
+          go version | grep -q 'go1.26.11'
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:

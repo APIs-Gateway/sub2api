@@ -120,7 +120,7 @@ func isRetryableCodexModelsManifestTransportError(err error) bool {
 	if errors.As(err, &dnsErr) {
 		return true
 	}
-	var goAwayErr http2.GoAwayError
+	var goAwayErr http2.GoAwayError //nolint:staticcheck // SA1019: x/net v0.60 弃用，迁移到 net/http HTTP2Config 另开 PR
 	if errors.As(err, &goAwayErr) {
 		return true
 	}
