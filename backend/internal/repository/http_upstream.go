@@ -1191,14 +1191,14 @@ func buildUpstreamTransport(settings poolSettings, proxyURL *url.URL, protocolMo
 
 // enableOpenAIHTTP2KeepAlive explicitly configures HTTP/2 and enables active
 // PING health checks so pooled dead connections are evicted promptly.
-func enableOpenAIHTTP2KeepAlive(transport *http.Transport) (*http2.Transport, error) {
-	h2, err := http2.ConfigureTransports(transport)
+func enableOpenAIHTTP2KeepAlive(transport *http.Transport) (*http2.Transport, error) { //nolint:staticcheck // SA1019: x/net v0.60 弃用，迁移到 net/http HTTP2Config 另开 PR
+	h2, err := http2.ConfigureTransports(transport) //nolint:staticcheck // SA1019: x/net v0.60 弃用，迁移到 net/http HTTP2Config 另开 PR
 	if err != nil {
 		return nil, err
 	}
 	if h2 != nil {
-		h2.ReadIdleTimeout = openAIHTTP2ReadIdleTimeout
-		h2.PingTimeout = openAIHTTP2PingTimeout
+		h2.ReadIdleTimeout = openAIHTTP2ReadIdleTimeout //nolint:staticcheck // SA1019: x/net v0.60 弃用，迁移到 net/http HTTP2Config 另开 PR
+		h2.PingTimeout = openAIHTTP2PingTimeout         //nolint:staticcheck // SA1019: x/net v0.60 弃用，迁移到 net/http HTTP2Config 另开 PR
 	}
 	return h2, nil
 }

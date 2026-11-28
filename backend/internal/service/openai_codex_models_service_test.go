@@ -629,7 +629,7 @@ func TestIsRetryableCodexModelsManifestTransportError(t *testing.T) {
 		{name: "closed connection", err: net.ErrClosed, retryable: true},
 		{name: "network operation", err: &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset")}, retryable: true},
 		{name: "dns", err: &net.DNSError{Err: "temporary failure", Name: "upstream.example"}, retryable: true},
-		{name: "typed goaway", err: http2.GoAwayError{ErrCode: http2.ErrCodeNo}, retryable: true},
+		{name: "typed goaway", err: http2.GoAwayError{ErrCode: http2.ErrCodeNo}, retryable: true}, //nolint:staticcheck // SA1019: x/net v0.60 弃用，迁移到 net/http HTTP2Config 另开 PR
 		{name: "typed stream error", err: http2.StreamError{Code: http2.ErrCodeRefusedStream}, retryable: true},
 		{name: "typed connection error", err: http2.ConnectionError(http2.ErrCodeProtocol), retryable: true},
 		{name: "stdlib goaway", err: errors.New("http2: server sent GOAWAY and closed the connection"), retryable: true},

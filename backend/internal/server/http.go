@@ -133,7 +133,7 @@ func ProvideHTTPServer(cfg *config.Config, router *gin.Engine) *http.Server {
 	// 根据配置决定是否启用 H2C
 	if cfg.Server.H2C.Enabled {
 		h2cConfig := cfg.Server.H2C
-		if err := http2.ConfigureServer(server, &http2.Server{
+		if err := http2.ConfigureServer(server, &http2.Server{ //nolint:staticcheck // SA1019: x/net v0.60 弃用，迁移到 net/http HTTP2Config 另开 PR
 			MaxConcurrentStreams:         h2cConfig.MaxConcurrentStreams,
 			IdleTimeout:                  time.Duration(h2cConfig.IdleTimeout) * time.Second,
 			MaxReadFrameSize:             uint32(h2cConfig.MaxReadFrameSize),

@@ -25,8 +25,8 @@ func TestEnableOpenAIHTTP2KeepAliveEnablesPingHealthCheck(t *testing.T) {
 	h2, err := enableOpenAIHTTP2KeepAlive(tr)
 	require.NoError(t, err)
 	require.NotNil(t, h2)
-	require.Equal(t, openAIHTTP2ReadIdleTimeout, h2.ReadIdleTimeout)
-	require.Equal(t, openAIHTTP2PingTimeout, h2.PingTimeout)
+	require.Equal(t, openAIHTTP2ReadIdleTimeout, h2.ReadIdleTimeout) //nolint:staticcheck // SA1019: x/net v0.60 弃用，迁移到 net/http HTTP2Config 另开 PR
+	require.Equal(t, openAIHTTP2PingTimeout, h2.PingTimeout)         //nolint:staticcheck // SA1019: x/net v0.60 弃用，迁移到 net/http HTTP2Config 另开 PR
 	require.NotNil(t, tr.TLSNextProto["h2"])
 }
 
